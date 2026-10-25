@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">LanDrop</string>
+    <string name="app_tagline">Файлы по Wi-Fi</string>
+    <string name="notification_channel_name">LanDrop</string>
+    <string name="notification_channel_desc">Приём файлов по Wi-Fi</string>
+</resources>
