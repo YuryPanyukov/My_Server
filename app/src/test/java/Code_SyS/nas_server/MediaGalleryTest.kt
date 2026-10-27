@@ -38,7 +38,10 @@ class MediaGalleryTest {
         override val key: String,
         override val title: String,
         private val entries: List<FakeEntry>,
+        private val deletable: Boolean = true,
     ) : MediaSource {
+        val deleted = mutableListOf<String>()
+
         override fun items(): List<MediaItem> = entries.map { it.item }
 
         override fun open(item: MediaItem): InputStream? =
@@ -46,6 +49,12 @@ class MediaGalleryTest {
 
         override fun thumbnail(item: MediaItem): ByteArray? =
             entries.firstOrNull { it.item.id == item.id }?.thumbnail
+
+        override fun delete(item: MediaItem): MediaDeleteResult {
+            if (!deletable) return MediaDeleteResult.NOT_SUPPORTED
+            deleted.add(item.id)
+            return MediaDeleteResult.DELETED
+        }
     }
 
     private val photoBytes = "PHOTO-CONTENT".toByteArray()
@@ -221,6 +230,56 @@ class MediaGalleryTest {
         val body = String(bodyOf(request("/gallery")), StandardCharsets.UTF_8)
 
         assertTrue("нужна ссылка на загрузку", body.contains("href=\"/\""))
+    }
+
+    @Test
+    fun `gallery cards have a delete button`() {
+        startServer()
+
+        val body = String(bodyOf(request("/gallery")), StandardCharsets.UTF_8)
+
+        assertTrue("кнопка удаления на карточке", body.contains("class='media-del'"))
+        assertTrue("запрос удаления", body.contains("/media/delete"))
+        assertTrue("подсказка о подтверждении", body.contains("needsConsent"))
+    }
+
+    @Test
+    fun `deletes a gallery item via http`() {
+        startServer()
+
+        val response = request("/media/delete?src=device&id=image%2F7", method = "POST")
+
+        assertEquals(200, statusOf(response))
+        assertTrue(String(bodyOf(response), StandardCharsets.UTF_8).contains("\"ok\":true"))
+        assertEquals(listOf("image/7"), deviceSource.deleted)
+    }
+
+    @Test
+    fun `read only gallery source answers 405`() {
+        val readOnly = FakeSource(
+            key = "received",
+            title = "Принятые",
+            entries = listOf(
+                FakeEntry(
+                    MediaItem("photo.png", "photo.png", 5, 1, "image/png", MediaItem.Kind.IMAGE),
+                    photoBytes,
+                    null,
+                ),
+            ),
+            deletable = false,
+        )
+        startServer(listOf(readOnly))
+
+        val response = request("/media/delete?src=received&id=photo.png", method = "POST")
+
+        assertEquals(405, statusOf(response))
+    }
+
+    @Test
+    fun `deleting an unknown gallery item returns 404`() {
+        startServer()
+
+        assertEquals(404, statusOf(request("/media/delete?src=device&id=image%2F999", method = "POST")))
     }
 
     @Test
@@ -456,6 +515,30 @@ class MediaGalleryTest {
         assertEquals(200, statusOf(response))
         assertTrue(headersOf(response).contains("Content-Type: text/plain"))
         assertArrayEquals("hello".toByteArray(), bodyOf(response))
+    }
+
+    // --- Удаление принятых медиа --------------------------------------------
+
+    @Test
+    fun `deleting received media moves the file to trash`() {
+        val file = File(dir, "shot.png").apply { writeBytes(photoBytes) }
+        val source = ReceivedMediaSource(files = { listOf(file) }, root = { dir })
+        val item = source.items().single()
+
+        assertEquals(MediaDeleteResult.DELETED, source.delete(item))
+        assertFalse("файл исчез из списка", file.exists())
+
+        val trashed = ReceivedStorage { dir }.trashEntries().single()
+        assertEquals("shot.png", trashed.originalPath)
+    }
+
+    @Test
+    fun `deleting an unknown received item reports not found`() {
+        val source = ReceivedMediaSource(files = { emptyList() }, root = { dir })
+
+        val missing = MediaItem("gone.png", "gone.png", 1, 1, "image/png", MediaItem.Kind.IMAGE)
+
+        assertEquals(MediaDeleteResult.NOT_FOUND, source.delete(missing))
     }
 
     // --- Источник принятых файлов ------------------------------------------

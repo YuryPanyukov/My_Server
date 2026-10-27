@@ -26,6 +26,24 @@ data class MediaItem(
     }
 }
 
+/** Итог удаления элемента галереи. */
+enum class MediaDeleteResult {
+    /** Элемент удалён (или перемещён в корзину). */
+    DELETED,
+
+    /** Элемента уже нет. */
+    NOT_FOUND,
+
+    /** Источник только для чтения. */
+    NOT_SUPPORTED,
+
+    /** Android требует подтверждения удаления на телефоне. */
+    NEEDS_CONSENT,
+
+    /** Удалить не удалось. */
+    FAILED,
+}
+
 /**
  * Источник элементов для галереи в браузере. Реализации не должны бросать
  * исключения при отсутствии доступа — лучше вернуть пустой список.
@@ -45,6 +63,9 @@ interface MediaSource {
 
     /** JPEG-превью либо `null` — тогда браузер покажет оригинал. */
     fun thumbnail(item: MediaItem): ByteArray? = null
+
+    /** Удаление элемента. По умолчанию источник только для чтения. */
+    fun delete(item: MediaItem): MediaDeleteResult = MediaDeleteResult.NOT_SUPPORTED
 }
 
 /** Принятые приложением файлы, показанные как медиа. */
@@ -75,6 +96,21 @@ class ReceivedMediaSource(
 
     override fun thumbnail(item: MediaItem): ByteArray? =
         files().firstOrNull { idOf(it) == item.id }?.let(thumbnailer)
+
+    /** Принятые файлы удаляются в корзину — их можно вернуть со страницы /trash. */
+    override fun delete(item: MediaItem): MediaDeleteResult {
+        val file = files().firstOrNull { idOf(it) == item.id } ?: return MediaDeleteResult.NOT_FOUND
+        val storage = root()
+        if (storage != null) {
+            val relative = StoragePaths.relativePath(storage, file) ?: return MediaDeleteResult.NOT_SUPPORTED
+            return if (ReceivedStorage { storage }.trash(relative) != null) {
+                MediaDeleteResult.DELETED
+            } else {
+                MediaDeleteResult.FAILED
+            }
+        }
+        return if (file.deleteRecursively()) MediaDeleteResult.DELETED else MediaDeleteResult.FAILED
+    }
 
     private fun idOf(file: File): String {
         val storage = root() ?: return file.name

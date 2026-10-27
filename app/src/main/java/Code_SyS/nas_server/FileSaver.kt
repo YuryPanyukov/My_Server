@@ -57,7 +57,23 @@ class FileSaver(private val context: Context) {
 
     fun move(path: String, targetDirPath: String?): StorageEntry? = storage.move(path, targetDirPath)
 
+    /** Удаляет файл или папку без возможности восстановления (очистка корзины). */
     fun delete(path: String): Boolean = storage.delete(path)
+
+    /** Удаление в корзину: элемент можно вернуть кнопкой «Отменить». */
+    fun trash(path: String): TrashEntry? = storage.trash(path)
+
+    /** Содержимое корзины, от новых удалений к старым. */
+    fun trashEntries(): List<TrashEntry> = storage.trashEntries()
+
+    /** Возвращает элемент корзины на исходное место. */
+    fun restore(id: String): StorageEntry? = storage.restore(id)
+
+    /** Удаляет один элемент корзины навсегда. */
+    fun deleteFromTrash(id: String): Boolean = storage.deleteFromTrash(id)
+
+    /** Очищает корзину и возвращает число удалённых элементов. */
+    fun emptyTrash(): Int = storage.emptyTrash()
 
     /** Разрешённый файл или папка по относительному пути. */
     fun resolve(path: String?): File? = storage.resolve(path)

@@ -75,6 +75,15 @@
             android:exported="false"
             android:theme="@style/Theme.LanDrop" />
 
+        <!-- Удаление фото и видео из галереи: системный диалог подтверждения.
+             Окно прозрачное, показывается только диалог Android. -->
+        <activity
+            android:name=".DeleteConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Хранилище (WebDAV): настройка долгого хранения и очередь выгрузок.
              Принимает файлы из «Поделиться», поэтому exported = true. -->
         <activity

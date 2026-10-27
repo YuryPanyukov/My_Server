@@ -25,12 +25,21 @@ import java.util.zip.ZipOutputStream
  *   `GET /api/files`    — содержимое папки (файлы и вложенные папки) в JSON;
  *   `GET /api/folders`  — все папки хранилища (для перемещения);
  *   `GET /files/<путь>` — содержимое файла (превью для картинок, видео, PDF и текста);
- *   `DELETE /files/<путь>` — удаление файла или папки (`?recursive=1`);
+ *   `DELETE /files/<путь>` — удаление файла или папки (`?recursive=1`) в корзину;
  *   `GET /zip?path=<путь>` — текущая папка одним ZIP-архивом;
  *   `POST /folder?path=<путь>&name=<имя>` — создание папки;
  *   `POST /rename?path=<путь>&name=<имя>` — переименование;
  *   `POST /move?path=<путь>&to=<папка>` — перемещение;
  *   `POST /delete` — удаление списка путей (по одному в строке);
+ *   `GET /trash` — корзина: восстановление и окончательное удаление;
+ *   `GET /api/trash` — корзина в JSON;
+ *   `POST /restore` — восстановление по `id` или списку id в теле;
+ *   `POST /trash/empty` — очистить корзину;
+ *   `DELETE /trash/<id>` — удалить элемент корзины навсегда;
+ *   `GET /library` — видеотека: видео и их описания;
+ *   `GET /api/library` — видеотека в JSON;
+ *   `POST /library/save?path=<путь>&title=<имя>` — сохранить описание (тело — текст);
+ *   `POST /library/reset?path=<путь>` — убрать описание;
  *   `GET /gallery`      — галерея фото и видео (принятые файлы + медиатека телефона);
  *   `GET /view?src=<источник>&id=<элемент>` — просмотр с листанием стрелками и свайпами;
  *   `GET /api/media`    — элементы галереи в JSON;
@@ -153,6 +162,26 @@ class HttpRequestHandler(
                         renderGallery(mediaSources(), request.query["src"]), includeBody = !headOnly
                     )
 
+                    request.path == TRASH_PATH -> writeResponse(
+                        output, 200, "OK", CONTENT_TYPE_HTML,
+                        renderTrashPage(), includeBody = !headOnly
+                    )
+
+                    request.path == TRASH_API_PATH -> writeResponse(
+                        output, 200, "OK", CONTENT_TYPE_JSON,
+                        trashJson().toByteArray(), includeBody = !headOnly
+                    )
+
+                    request.path == LIBRARY_PATH -> writeResponse(
+                        output, 200, "OK", CONTENT_TYPE_HTML,
+                        renderLibraryPage(), includeBody = !headOnly
+                    )
+
+                    request.path == LIBRARY_API_PATH -> writeResponse(
+                        output, 200, "OK", CONTENT_TYPE_JSON,
+                        libraryJson().toByteArray(), includeBody = !headOnly
+                    )
+
                     request.path == "/api/media" -> writeResponse(
                         output, 200, "OK", CONTENT_TYPE_JSON,
                         mediaJson(mediaSources(), request.query["src"]).toByteArray(), includeBody = !headOnly
@@ -189,14 +218,24 @@ class HttpRequestHandler(
                 "/rename" -> renameEntry(request, output)
                 "/move" -> moveEntry(request, output)
                 "/delete" -> deleteMany(request, body, output)
+                "/media/delete" -> deleteMedia(request, output)
+                "/restore" -> restoreEntries(request, body, output)
+                LIBRARY_SAVE_PATH -> saveLibraryItem(request, body, output)
+                LIBRARY_RESET_PATH -> resetLibraryItem(request, output)
+                TRASH_EMPTY_PATH -> emptyTrash(output)
                 else -> notFound(output)
             }
 
-            "DELETE" -> if (request.path.startsWith(FILES_PATH_PREFIX)) {
-                val recursive = request.query["recursive"] == "1" || request.query["recursive"] == "true"
-                deleteStoredFile(request.path.removePrefix(FILES_PATH_PREFIX), recursive, output)
-            } else {
-                notFound(output)
+            "DELETE" -> when {
+                request.path.startsWith(TRASH_PATH_PREFIX) ->
+                    deleteTrashEntry(request.path.removePrefix(TRASH_PATH_PREFIX), output)
+
+                request.path.startsWith(FILES_PATH_PREFIX) -> {
+                    val recursive = request.query["recursive"] == "1" || request.query["recursive"] == "true"
+                    deleteStoredFile(request.path.removePrefix(FILES_PATH_PREFIX), recursive, output)
+                }
+
+                else -> notFound(output)
             }
 
             "OPTIONS" -> writeResponse(
@@ -356,7 +395,8 @@ class HttpRequestHandler(
     }
 
     /**
-     * Удаляет файл, а с `?recursive=1` — папку со всем содержимым.
+     * Удаляет файл, а с `?recursive=1` — папку со всем содержимым. Элемент
+     * переезжает в корзину: `trash` в ответе — id для `POST /restore`.
      * Удаляются только пути, видимые в текущем режиме доступа.
      */
     private fun deleteStoredFile(path: String, recursive: Boolean, output: OutputStream) {
@@ -397,14 +437,26 @@ class HttpRequestHandler(
             return
         }
 
-        val deleted = try {
-            legacyFile?.delete() ?: storage?.delete(relative) ?: false
-        } catch (e: Exception) {
-            logger("HTTP: ошибка удаления $relative: ${e.message}")
-            false
+        // Плоский список без корня хранилища (старый режим) не умеет корзину:
+        // там удаление остаётся окончательным.
+        val trashed = if (root == null) {
+            val deleted = try {
+                legacyFile?.delete() ?: false
+            } catch (e: Exception) {
+                logger("HTTP: ошибка удаления $relative: ${e.message}")
+                false
+            }
+            if (deleted) null else return writeServerError(output)
+        } else {
+            try {
+                storage?.trash(relative)
+            } catch (e: Exception) {
+                logger("HTTP: ошибка удаления $relative: ${e.message}")
+                null
+            }
         }
 
-        if (!deleted) {
+        if (root != null && trashed == null) {
             writeResponse(
                 output, 500, "Internal Server Error", CONTENT_TYPE_JSON,
                 errorJson("Не удалось удалить файл").toByteArray()
@@ -413,9 +465,17 @@ class HttpRequestHandler(
         }
 
         logger("HTTP: удалён $relative")
+        val trashField = trashed?.let { ",\"trash\":\"${jsonEscape(it.id)}\"" }.orEmpty()
         writeResponse(
             output, 200, "OK", CONTENT_TYPE_JSON,
-            "{\"ok\":true,\"path\":\"${jsonEscape(relative)}\"}".toByteArray()
+            "{\"ok\":true,\"path\":\"${jsonEscape(relative)}\"$trashField}".toByteArray()
+        )
+    }
+
+    private fun writeServerError(output: OutputStream) {
+        writeResponse(
+            output, 500, "Internal Server Error", CONTENT_TYPE_JSON,
+            errorJson("Не удалось удалить файл").toByteArray()
         )
     }
 
@@ -880,13 +940,271 @@ class HttpRequestHandler(
 
         val zipLink = if (currentPath.isEmpty()) "/zip" else "/zip?path=" + encodeRelativePath(currentPath)
 
+        val trashSize = try {
+            storageRoot()?.let { ReceivedStorage { it }.trashSize() } ?: 0
+        } catch (_: Exception) {
+            0
+        }
+
         return WebTemplates.PAGE
             .replace(FILES_MARKER, rows)
             .replace(FILE_COUNT_MARKER, entries.size.toString())
             .replace(BREADCRUMBS_MARKER, crumbs)
             .replace(CURRENT_PATH_MARKER, htmlEscape(currentPath))
             .replace(ZIP_LINK_MARKER, zipLink)
+            .replace(TRASH_LINK_MARKER, trashLink(trashSize))
             .toByteArray(StandardCharsets.UTF_8)
+    }
+
+    /** Ссылка «Корзина» в панели: счётчик показывает, что там есть что вернуть. */
+    private fun trashLink(size: Int): String {
+        val suffix = if (size > 0) " ($size)" else ""
+        return "<a class=\"ghost-btn btn-small\" id=\"trash-link\" href=\"$TRASH_PATH\">" +
+            "Корзина$suffix</a>"
+    }
+
+    /** Страница корзины: вернуть элемент или удалить его окончательно. */
+    private fun renderTrashPage(): ByteArray {
+        val entries = trashEntries()
+
+        val dateFormat = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+        val rows = if (entries.isEmpty()) {
+            "<li class=\"empty\"><span class=\"empty-icon\">🗑</span>" +
+                "<span>Корзина пуста</span>" +
+                "<small>Удалённые файлы и папки будут появляться здесь</small></li>"
+        } else {
+            buildString {
+                for (entry in entries) {
+                    val label = if (entry.isDirectory) "DIR" else fileTypeLabel(entry.name)
+                    val kind = if (entry.isDirectory) "folder" else fileKind(entry.name)
+                    append("<li class=\"file-item\" data-id=\"").append(htmlEscape(entry.id))
+                        .append("\"><span class=\"file-thumb\" data-kind=\"").append(kind)
+                        .append("\"><span class=\"ftype\" data-kind=\"").append(kind).append("\">")
+                        .append(htmlEscape(label)).append("</span></span>")
+                        .append("<span class=\"file-main\"><span class=\"file\">")
+                        .append(htmlEscape(entry.name))
+                        .append("</span><span class=\"meta\">Было: ")
+                        .append(htmlEscape(entry.originalPath)).append(" · ")
+                        .append(dateFormat.format(Date(entry.deletedAt)))
+                        .append("</span></span><span class=\"file-actions\">")
+                        .append("<button class=\"restore\" type=\"button\" title=\"Восстановить\" ")
+                        .append("aria-label=\"Восстановить\" data-id=\"").append(htmlEscape(entry.id))
+                        .append("\">↩</button>")
+                        .append("<button class=\"del\" type=\"button\" title=\"Удалить навсегда\" ")
+                        .append("aria-label=\"Удалить навсегда\" data-id=\"").append(htmlEscape(entry.id))
+                        .append("\">×</button></span></li>")
+                }
+            }
+        }
+
+        val clear = if (entries.isEmpty()) {
+            ""
+        } else {
+            "<button class=\"ghost-btn btn-small danger\" id=\"trash-empty\" type=\"button\">" +
+                "Очистить корзину</button>"
+        }
+
+        return WebTemplates.TRASH
+            .replace(TRASH_ITEMS_MARKER, rows)
+            .replace(TRASH_CLEAR_MARKER, clear)
+            .replace(TRASH_COUNT_MARKER, entries.size.toString())
+            .toByteArray(StandardCharsets.UTF_8)
+    }
+
+    /**
+     * Корзина целиком. Режим частичного доступа фильтрует текущие файлы,
+     * а не удалённые: у элемента корзины уже нет времени изменения, по которому
+     * считаются режимы «сегодня/дата», и скрывать сам факт удаления бессмысленно.
+     */
+    private fun trashEntries(): List<TrashEntry> = try {
+        storageRoot()?.let { ReceivedStorage { it }.trashEntries() } ?: emptyList()
+    } catch (e: Exception) {
+        logger("HTTP: не удалось прочитать корзину: ${e.message}")
+        emptyList()
+    }
+
+    /** Корзина в JSON — для встроенного клиента и скриптов. */
+    private fun trashJson(): String = buildString {
+        val entries = trashEntries()
+        append("{\"items\":[")
+        entries.forEachIndexed { index, entry ->
+            if (index > 0) append(',')
+            append("{\"id\":\"").append(jsonEscape(entry.id))
+                .append("\",\"name\":\"").append(jsonEscape(entry.name))
+                .append("\",\"path\":\"").append(jsonEscape(entry.originalPath))
+                .append("\",\"directory\":").append(entry.isDirectory)
+                .append(",\"size\":").append(entry.size)
+                .append(",\"deleted\":").append(entry.deletedAt)
+                .append('}')
+        }
+        append("]}")
+    }
+
+    // --- Видеотека -----------------------------------------------------------
+
+    /** Видеотека поверх хранилища; без корня папок показывать нечего. */
+    private fun library(): MediaLibrary? = storageRoot()?.let { root -> MediaLibrary { root } }
+
+    /** Видео, видимые в текущем режиме доступа. */
+    private fun libraryItems(): List<LibraryItem> = try {
+        library()?.items()?.filter { isAllowedForDelete(it.path, directory = false) }.orEmpty()
+    } catch (e: Exception) {
+        logger("HTTP: не удалось прочитать видеотеку: ${e.message}")
+        emptyList()
+    }
+
+    /** Страница видеотеки: карточки видео с заголовком и описанием. */
+    private fun renderLibraryPage(): ByteArray {
+        val items = libraryItems()
+        val dateFormat = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
+
+        val rows = if (items.isEmpty()) {
+            "<p class='empty'><span class='empty-icon'>▶</span><span>Пока нет видео.</span>" +
+                "<small>Загрузите видео на странице загрузки — оно появится здесь.</small></p>"
+        } else {
+            buildString {
+                for (item in items) {
+                    val encoded = encodeRelativePath(item.path)
+                    append("<article class='vcard'>")
+                        .append("<a class='vthumb' href='").append(FILES_PATH_PREFIX).append(encoded)
+                        .append("' target='_blank' rel='noopener'>")
+                        .append("<img class='thumb' src='").append(THUMB_FILE_PATH)
+                        .append("?name=").append(encoded).append("&amp;v=").append(item.modified)
+                        .append("' loading='lazy' decoding='async' alt=''>")
+                        .append("<span class='play' aria-hidden='true'>▶</span></a>")
+                        .append("<div class='vbody'><h3>").append(htmlEscape(item.title)).append("</h3>")
+                    if (item.description.isBlank()) {
+                        append("<p class='vdesc muted'>Без описания</p>")
+                    } else {
+                        append("<p class='vdesc'>").append(htmlEscape(item.description)).append("</p>")
+                    }
+                    append("<div class='vfoot'><span class='vmeta'>")
+                        .append(formatSize(item.size)).append(" · ")
+                        .append(dateFormat.format(Date(item.modified)))
+                        .append("</span><span class='vactions'>")
+                        .append("<button class='edit' type='button' title='Изменить описание' ")
+                        .append("aria-label='Изменить описание' data-path='").append(htmlEscape(item.path))
+                        .append("'>✎</button>")
+                        .append("<button class='del' type='button' title='Удалить' ")
+                        .append("aria-label='Удалить' data-path='").append(htmlEscape(item.path))
+                        .append("' data-name='").append(htmlEscape(item.name)).append("'>×</button>")
+                        .append("</span></div></div></article>")
+                }
+            }
+        }
+
+        val data = buildString {
+            append('{')
+            items.forEachIndexed { index, item ->
+                if (index > 0) append(',')
+                append(jsString(item.path)).append(":{title:").append(jsString(item.title))
+                    .append(",description:").append(jsString(item.description))
+                    .append(",described:").append(item.hasDescription)
+                    .append('}')
+            }
+            append('}')
+        }
+
+        return WebTemplates.LIBRARY
+            .replace(LIBRARY_ITEMS_MARKER, rows)
+            .replace(LIBRARY_COUNT_MARKER, items.size.toString())
+            .replace(LIBRARY_DATA_MARKER, data)
+            .toByteArray(StandardCharsets.UTF_8)
+    }
+
+    /** Видеотека в JSON — для встроенного клиента и скриптов. */
+    private fun libraryJson(): String = buildString {
+        val items = libraryItems()
+        append("{\"items\":[")
+        items.forEachIndexed { index, item ->
+            if (index > 0) append(',')
+            append("{\"path\":\"").append(jsonEscape(item.path))
+                .append("\",\"name\":\"").append(jsonEscape(item.name))
+                .append("\",\"title\":\"").append(jsonEscape(item.title))
+                .append("\",\"description\":\"").append(jsonEscape(item.description))
+                .append("\",\"size\":").append(item.size)
+                .append(",\"modified\":").append(item.modified)
+                .append(",\"updated\":").append(item.updatedAt)
+                .append(",\"described\":").append(item.hasDescription)
+                .append('}')
+        }
+        append("]}")
+    }
+
+    /**
+     * Сохраняет описание. Заголовок и путь — в строке запроса, текст описания —
+     * в теле: так кириллица не упирается в лимит длины строки запроса.
+     */
+    private fun saveLibraryItem(request: Request, body: InputStream, output: OutputStream) {
+        val target = library() ?: run {
+            notFound(output)
+            return
+        }
+        val videoPath = StoragePaths.normalize(request.query["path"])
+        if (videoPath.isNullOrEmpty() || !isAllowedForDelete(videoPath, directory = false)) {
+            notFound(output)
+            return
+        }
+        val length = request.headers["content-length"]?.toLongOrNull() ?: 0L
+        val fromBody = if (length > 0) {
+            if (length > MAX_LIBRARY_BODY_BYTES) {
+                writeResponse(
+                    output, 413, "Payload Too Large", CONTENT_TYPE_JSON,
+                    errorJson("Слишком длинное описание").toByteArray()
+                )
+                return
+            }
+            try {
+                String(readLimitedBytes(body, length.toInt()), StandardCharsets.UTF_8)
+            } catch (_: Exception) {
+                ""
+            }
+        } else {
+            null
+        }
+        val description = fromBody ?: request.query["description"].orEmpty()
+
+        val saved = try {
+            target.save(request.query["path"], request.query["title"].orEmpty(), description)
+        } catch (e: Exception) {
+            logger("HTTP: не удалось сохранить описание: ${e.message}")
+            null
+        }
+        if (saved == null) {
+            writeResponse(
+                output, 404, "Not Found", CONTENT_TYPE_JSON,
+                errorJson("Видео не найдено").toByteArray()
+            )
+            return
+        }
+
+        logger("HTTP: описание сохранено для ${saved.path}")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            ("{\"ok\":true,\"path\":\"" + jsonEscape(saved.path) +
+                "\",\"title\":\"" + jsonEscape(saved.title) + "\"}").toByteArray()
+        )
+    }
+
+    /** Убирает описание видео: карточка снова показывает имя файла. */
+    private fun resetLibraryItem(request: Request, output: OutputStream) {
+        val target = library() ?: run {
+            notFound(output)
+            return
+        }
+        val videoPath = StoragePaths.normalize(request.query["path"])
+        if (videoPath.isNullOrEmpty() || !isAllowedForDelete(videoPath, directory = false)) {
+            notFound(output)
+            return
+        }
+        if (!target.reset(videoPath)) {
+            writeResponse(
+                output, 404, "Not Found", CONTENT_TYPE_JSON,
+                errorJson("Видео не найдено").toByteArray()
+            )
+            return
+        }
+        writeResponse(output, 200, "OK", CONTENT_TYPE_JSON, "{\"ok\":true}".toByteArray())
     }
 
     /** CSS-категория файла: от неё зависит цвет значка в списке. */
@@ -993,7 +1311,7 @@ class HttpRequestHandler(
         for (item in shown) {
             val encodedSource = encodePathSegment(source.key)
             val encodedId = encodePathSegment(item.id)
-            append("<a class='card' href='/view?src=").append(encodedSource)
+            append("<div class='cell'><a class='card' href='/view?src=").append(encodedSource)
                 .append("&amp;id=").append(encodedId)
                 .append("' target='_blank' rel='noopener'>")
             if (item.kind == MediaItem.Kind.OTHER) {
@@ -1006,6 +1324,9 @@ class HttpRequestHandler(
             }
             append("<span class='cap' title='").append(htmlEscape(item.name)).append("'>")
                 .append(htmlEscape(item.name)).append("</span></a>")
+            append("<button class='media-del' type='button' title='Удалить' aria-label='Удалить' data-src='")
+                .append(encodedSource).append("' data-id='").append(encodedId)
+                .append("' data-name='").append(htmlEscape(item.name)).append("'>×</button></div>")
         }
         append("</div>")
         if (items.size > shown.size) {
@@ -1013,6 +1334,54 @@ class HttpRequestHandler(
                 .append(shown.size).append(" из ").append(items.size).append(".</span></p>")
         }
         append("</section>")
+    }
+
+    /**
+     * Удаление элемента галереи. Принятые файлы уходят в корзину, а фото
+     * и видео телефона — через MediaStore (с подтверждением на Android 11+).
+     */
+    private fun deleteMedia(request: Request, output: OutputStream) {
+        val source = mediaSources().firstOrNull { it.key == request.query["src"] }
+        if (source == null) {
+            notFound(output)
+            return
+        }
+        val id = request.query["id"]
+        val item = try {
+            source.items().firstOrNull { it.id == id }
+        } catch (e: Exception) {
+            logger("HTTP: не удалось прочитать источник ${source.key}: ${e.message}")
+            null
+        }
+        if (item == null) {
+            notFound(output)
+            return
+        }
+
+        when (source.delete(item)) {
+            MediaDeleteResult.DELETED -> {
+                logger("HTTP: удалён элемент галереи ${item.name}")
+                writeResponse(output, 200, "OK", CONTENT_TYPE_JSON, "{\"ok\":true}".toByteArray())
+            }
+
+            MediaDeleteResult.NEEDS_CONSENT -> writeResponse(
+                output, 403, "Forbidden", CONTENT_TYPE_JSON,
+                ("{\"ok\":false,\"needsConsent\":true,\"error\":\"" +
+                    jsonEscape("Android просит подтвердить удаление на телефоне") + "\"}").toByteArray()
+            )
+
+            MediaDeleteResult.NOT_FOUND -> notFound(output)
+
+            MediaDeleteResult.NOT_SUPPORTED -> writeResponse(
+                output, 405, "Method Not Allowed", CONTENT_TYPE_JSON,
+                errorJson("Этот источник не поддерживает удаление").toByteArray()
+            )
+
+            MediaDeleteResult.FAILED -> writeResponse(
+                output, 500, "Internal Server Error", CONTENT_TYPE_JSON,
+                errorJson("Не удалось удалить элемент").toByteArray()
+            )
+        }
     }
 
     private fun mediaJson(sources: List<MediaSource>, selectedKey: String?): String = buildString {
@@ -1195,6 +1564,7 @@ class HttpRequestHandler(
 
         var deleted = 0
         var failed = 0
+        val trashIds = ArrayList<String>()
         for (path in paths) {
             val relative = StoragePaths.normalize(path)
             val entry = if (relative == null || relative.isEmpty()) null else storage.entry(relative)
@@ -1202,18 +1572,116 @@ class HttpRequestHandler(
                 failed++
                 continue
             }
-            if (!isAllowedForDelete(relative, entry.isDirectory) || !storage.delete(relative)) {
+            val trashed = if (isAllowedForDelete(relative, entry.isDirectory)) {
+                storage.trash(relative)
+            } else {
+                null
+            }
+            if (trashed == null) {
                 failed++
             } else {
+                trashIds.add(trashed.id)
                 deleted++
             }
         }
 
         logger("HTTP: удалено $deleted, не удалось $failed")
+        val trashJson = trashIds.joinToString(",") { "\"${jsonEscape(it)}\"" }
         writeResponse(
             output, 200, "OK", CONTENT_TYPE_JSON,
-            "{\"ok\":${failed == 0},\"deleted\":$deleted,\"failed\":$failed}".toByteArray()
+            ("{\"ok\":${failed == 0},\"deleted\":$deleted,\"failed\":$failed," +
+                "\"trash\":[$trashJson]}").toByteArray()
         )
+    }
+
+    /**
+     * Возвращает элементы корзины на исходные места. Id приходят параметром
+     * `id` (одиночная отмена) или списком в теле (отмена группового удаления).
+     */
+    private fun restoreEntries(request: Request, body: InputStream, output: OutputStream) {
+        val storage = storageRoot()?.let { ReceivedStorage { it } } ?: run {
+            notFound(output)
+            return
+        }
+
+        val ids = ArrayList<String>()
+        request.query["id"]?.trim()?.takeIf { it.isNotEmpty() }?.let { ids.add(it) }
+        if (ids.isEmpty()) {
+            val length = request.headers["content-length"]?.toLongOrNull() ?: 0L
+            if (length > 0) {
+                if (length > MAX_BULK_DELETE_BYTES) {
+                    writeResponse(
+                        output, 400, "Bad Request", CONTENT_TYPE_JSON,
+                        errorJson("Список на восстановление слишком большой").toByteArray()
+                    )
+                    return
+                }
+                val text = try {
+                    readLimited(body, length.toInt())
+                } catch (_: Exception) {
+                    ""
+                }
+                text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.forEach { ids.add(it) }
+            }
+        }
+
+        val visible = trashEntries().associateBy { it.id }
+        var restored = 0
+        var failed = 0
+        for (id in ids.distinct()) {
+            val entry = visible[id]
+            if (entry != null && storage.restore(id) != null) restored++ else failed++
+        }
+
+        logger("HTTP: восстановлено $restored, не удалось $failed")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            "{\"ok\":${failed == 0},\"restored\":$restored,\"failed\":$failed}".toByteArray()
+        )
+    }
+
+    /** Очищает корзину: элементы уже удалены пользователем окончательно. */
+    private fun emptyTrash(output: OutputStream) {
+        val storage = storageRoot()?.let { ReceivedStorage { it } } ?: run {
+            notFound(output)
+            return
+        }
+        val deleted = trashEntries().count { entry -> storage.deleteFromTrash(entry.id) }
+        logger("HTTP: корзина очищена, удалено $deleted")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            "{\"ok\":true,\"deleted\":$deleted}".toByteArray()
+        )
+    }
+
+    /** Удаляет один элемент корзины навсегда. */
+    private fun deleteTrashEntry(id: String, output: OutputStream) {
+        val storage = storageRoot()?.let { ReceivedStorage { it } } ?: run {
+            notFound(output)
+            return
+        }
+        val visible = trashEntries().any { it.id == id }
+        if (!visible || !storage.deleteFromTrash(id)) {
+            writeResponse(
+                output, 404, "Not Found", CONTENT_TYPE_JSON,
+                errorJson("Этого элемента нет в корзине").toByteArray()
+            )
+            return
+        }
+        writeResponse(output, 200, "OK", CONTENT_TYPE_JSON, "{\"ok\":true}".toByteArray())
+    }
+
+    private fun readLimitedBytes(input: InputStream, limit: Int): ByteArray {
+        val buffer = ByteArrayOutputStream()
+        val chunk = ByteArray(4096)
+        var remaining = limit
+        while (remaining > 0) {
+            val read = input.read(chunk, 0, minOf(chunk.size, remaining))
+            if (read < 0) break
+            buffer.write(chunk, 0, read)
+            remaining -= read
+        }
+        return buffer.toByteArray()
     }
 
     private fun readLimited(input: InputStream, limit: Int): String {
@@ -1541,6 +2009,29 @@ class HttpRequestHandler(
         private const val BREADCRUMBS_MARKER = "<!--BREADCRUMBS-->"
         private const val CURRENT_PATH_MARKER = "<!--CURRENT_PATH-->"
         private const val ZIP_LINK_MARKER = "<!--ZIP_LINK-->"
+        private const val TRASH_LINK_MARKER = "<!--TRASH_LINK-->"
+        private const val TRASH_ITEMS_MARKER = "<!--TRASH_ITEMS-->"
+        private const val TRASH_CLEAR_MARKER = "<!--TRASH_CLEAR-->"
+        private const val TRASH_COUNT_MARKER = "<!--TRASH_COUNT-->"
+
+        /** Видеотека: страница, JSON и сохранение описания. */
+        private const val LIBRARY_PATH = "/library"
+        private const val LIBRARY_API_PATH = "/api/library"
+        private const val LIBRARY_SAVE_PATH = "/library/save"
+        private const val LIBRARY_RESET_PATH = "/library/reset"
+        private const val LIBRARY_ITEMS_MARKER = "<!--LIBRARY_ITEMS-->"
+        private const val LIBRARY_COUNT_MARKER = "<!--LIBRARY_COUNT-->"
+        private const val LIBRARY_DATA_MARKER = "<!--LIBRARY_DATA-->"
+
+        /** Сколько байт описания принимаем: больше лимита MediaLibrary всё равно обрежет. */
+        private const val MAX_LIBRARY_BODY_BYTES = 64 * 1024
+
+        /** Корзина: страница, JSON и служебные маршруты. */
+        private const val TRASH_PATH = "/trash"
+        private const val TRASH_PATH_PREFIX = "/trash/"
+        private const val TRASH_API_PATH = "/api/trash"
+        private const val TRASH_EMPTY_PATH = "/trash/empty"
+
         private const val ALLOWED_METHODS = "GET, HEAD, POST, PUT, DELETE, OPTIONS"
 
         /** Сколько байт списка путей принимаем на массовое удаление. */

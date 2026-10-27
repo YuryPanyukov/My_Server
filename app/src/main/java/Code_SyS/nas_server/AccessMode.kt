@@ -158,6 +158,10 @@ internal class AccessFilteredSource(
     override fun open(item: MediaItem): InputStream? = origin.open(item)
 
     override fun thumbnail(item: MediaItem): ByteArray? = origin.thumbnail(item)
+
+    /** Скрытый режимом доступа элемент удалить нельзя — только видимые. */
+    override fun delete(item: MediaItem): MediaDeleteResult =
+        if (allowed(item)) origin.delete(item) else MediaDeleteResult.NOT_FOUND
 }
 
 /**

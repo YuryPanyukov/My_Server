@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -27,6 +29,12 @@ import kotlin.math.min
  * сканер, а уже страница предлагает открыть приложение LanDrop.
  */
 object QrCode {
+
+    /**
+     * Подпись для TalkBack и тестов: код рисуется на Canvas, без текста,
+     * поэтому без описания его не видит ни экранный диктор, ни UI-тест.
+     */
+    const val DESCRIPTION = "QR-код для подключения"
 
     /** «Тихая зона» вокруг кода в модулях: без неё сканеры хуже находят код. */
     const val QUIET_ZONE = 2
@@ -58,7 +66,9 @@ fun QrCodeImage(content: String, modifier: Modifier = Modifier) {
     }
 
     Box(
-        modifier = modifier.background(Color.White, RoundedCornerShape(12.dp)),
+        modifier = modifier
+            .background(Color.White, RoundedCornerShape(12.dp))
+            .semantics { contentDescription = QrCode.DESCRIPTION },
         contentAlignment = Alignment.Center,
     ) {
         if (modules == null) return@Box

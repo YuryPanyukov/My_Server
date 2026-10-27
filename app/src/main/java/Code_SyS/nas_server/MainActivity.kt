@@ -213,6 +213,7 @@ fun FileReceiverScreen(
     var moveFolders by remember { mutableStateOf<List<String>?>(null) }
     var entryToRename by remember { mutableStateOf<StorageEntry?>(null) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     /** Режим выделения: включается долгим нажатием по плитке файла. */
     var selectionMode by remember { mutableStateOf(false) }
@@ -223,6 +224,8 @@ fun FileReceiverScreen(
     var accessMode by remember { mutableStateOf(AccessModeStore.load(context)) }
     var vaultPending by remember { mutableIntStateOf(0) }
     var vaultAutoPending by remember { mutableIntStateOf(0) }
+    /** Сколько фото/видео ждёт подтверждения удаления из браузера. */
+    var pendingDeletes by remember { mutableIntStateOf(0) }
     val fileSaver = remember { FileSaver(context) }
 
     // Список недавних телефонов обновляется после возврата со сканера.
@@ -273,6 +276,7 @@ fun FileReceiverScreen(
                 galleryUrlText = if (ip != null) "Галерея: http://$ip:${Protocol.PORT}/gallery" else "Галерея: —"
                 mediaAccess = MainActivity.hasMediaAccess(context)
                 cameraAccess = MainActivity.hasCameraAccess(context)
+                pendingDeletes = PendingDeletes.count(context)
                 val snapshot = withContext(Dispatchers.IO) {
                     fileSaver.listFiles() to fileSaver.entries(currentPath)
                 }
@@ -347,9 +351,9 @@ fun FileReceiverScreen(
             text = {
                 Text(
                     when {
-                        targets.size == 1 -> targets.first().name
-                        hasFolder -> "Выбранные файлы и папки будут удалены с телефона. Содержимое папок тоже удалится."
-                        else -> "Выбранные файлы будут удалены с телефона."
+                        targets.size == 1 -> targets.first().name + "\n\nФайл переедет в корзину — его можно вернуть."
+                        hasFolder -> "Выбранные файлы и папки переедут в корзину. Содержимое папок тоже скроется."
+                        else -> "Выбранные файлы переедут в корзину — их можно вернуть."
                     }
                 )
             },
@@ -357,15 +361,14 @@ fun FileReceiverScreen(
                 TextButton(onClick = {
                     filesToDelete = emptyList()
                     scope.launch {
-                        var failed = 0
-                        withContext(Dispatchers.IO) {
-                            for (target in targets) {
-                                if (!fileSaver.delete(target.path)) failed++
-                            }
+                        val trashed = withContext(Dispatchers.IO) {
+                            targets.mapNotNull { target -> fileSaver.trash(target.path)?.id }
                         }
                         files = withContext(Dispatchers.IO) { fileSaver.listFiles() }
                         entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
                         clearSelection()
+
+                        val failed = targets.size - trashed.size
                         if (failed > 0) {
                             val message = if (failed == 1) {
                                 "Не удалось удалить элемент"
@@ -373,6 +376,28 @@ fun FileReceiverScreen(
                                 "Не удалось удалить элементов: $failed"
                             }
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+
+                        // Корзина позволяет быстро передумать. Если снекбар уже
+                        // закрылся, те же файлы лежат на странице /trash.
+                        if (trashed.isNotEmpty()) {
+                            val result = snackbarHostState.showSnackbar(
+                                message = if (trashed.size == 1 && targets.size == 1) {
+                                    "Удалено: ${targets.first().name}"
+                                } else {
+                                    "Удалено: ${trashed.size}"
+                                },
+                                actionLabel = "Отменить",
+                                withDismissAction = true,
+                                duration = SnackbarDuration.Long,
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                withContext(Dispatchers.IO) {
+                                    trashed.forEach { id -> fileSaver.restore(id) }
+                                }
+                                files = withContext(Dispatchers.IO) { fileSaver.listFiles() }
+                                entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
+                            }
                         }
                     }
                 }) { Text("Удалить") }
@@ -402,239 +427,278 @@ fun FileReceiverScreen(
     // Один список на весь экран: карточки и плитки файлов прокручиваются вместе,
     // иначе на невысоких экранах списку файлов почти не остаётся места.
     // Карточки занимают всю ширину строки, а файлы идут по два в ряд.
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-        BrandHeader()
-        Spacer(modifier = Modifier.height(20.dp))
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+            // Явная колонка обязательна: дети ленивой ячейки без контейнера
+            // раскладываются не по порядку и часть карточек пропадает.
+            Column(modifier = Modifier.fillMaxWidth()) {
+            BrandHeader()
+            Spacer(modifier = Modifier.height(20.dp))
 
-        ServerCard(
-            running = isServiceRunning,
-            hint = statusHint,
-            onCheckedChange = { checked ->
-                if (!checked) {
-                    context.startService(
-                        Intent(context, FileReceiverService::class.java)
-                            .setAction(FileReceiverService.ACTION_STOP)
-                    )
-                    isServiceRunning = false
-                } else {
-                    // Сервер работает только в локальной Wi-Fi сети: без IP стартовать нечего.
-                    val ip = NetworkUtils.getWifiIpAddress(context)
-                    if (ip == null) {
-                        statusText = if (NetworkUtils.isWifiConnected(context)) {
-                            "Не удалось определить IP-адрес"
-                        } else {
-                            "Нет подключения к Wi-Fi"
-                        }
-                    } else {
-                        ContextCompat.startForegroundService(
-                            context,
+            ServerCard(
+                running = isServiceRunning,
+                hint = statusHint,
+                onCheckedChange = { checked ->
+                    if (!checked) {
+                        context.startService(
                             Intent(context, FileReceiverService::class.java)
-                                .setAction(FileReceiverService.ACTION_START)
+                                .setAction(FileReceiverService.ACTION_STOP)
                         )
-                        isServiceRunning = true
+                        isServiceRunning = false
+                    } else {
+                        // Сервер работает только в локальной Wi-Fi сети: без IP стартовать нечего.
+                        val ip = NetworkUtils.getWifiIpAddress(context)
+                        if (ip == null) {
+                            statusText = if (NetworkUtils.isWifiConnected(context)) {
+                                "Не удалось определить IP-адрес"
+                            } else {
+                                "Нет подключения к Wi-Fi"
+                            }
+                        } else {
+                            ContextCompat.startForegroundService(
+                                context,
+                                Intent(context, FileReceiverService::class.java)
+                                    .setAction(FileReceiverService.ACTION_START)
+                            )
+                            isServiceRunning = true
+                        }
                     }
                 }
-            }
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-        AddressCard(
-            address = address,
-            webUrl = webUrl,
-            galleryUrl = galleryUrl,
-            shareUrl = shareUrl,
-            running = isServiceRunning,
-            onOpen = { url -> openBrowser(context, url) },
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-        VaultCard(
-            pending = vaultPending,
-            autoPending = vaultAutoPending,
-            onClick = {
-                try {
-                    context.startActivity(Intent(context, VaultActivity::class.java))
-                } catch (_: Exception) {
-                    Toast.makeText(context, "Не удалось открыть хранилище", Toast.LENGTH_SHORT).show()
-                }
-            },
-        )
-
-        // Режим доступа виден только при работающем сервере: тумблер и переключение
-        // режима — часть одного действия «открыть телефон в сеть».
-        if (isServiceRunning) {
-            Spacer(modifier = Modifier.height(12.dp))
-            AccessModeCard(
-                mode = accessMode,
-                fileCount = files.size,
-                onModeChange = { mode ->
-                    accessMode = mode
-                    AccessModeStore.set(context, mode)
-                },
-                onPickSelection = { showSelection = true },
-                onPickDate = { pickDate(context) { epochDay ->
-                    val mode = AccessMode.Period.OnDate(epochDay)
-                    accessMode = mode
-                    AccessModeStore.set(context, mode)
-                } },
             )
-        }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        ConnectCard(
-            hosts = recentHosts,
-            cameraGranted = cameraAccess,
-            onGrantCamera = { (context as? MainActivity)?.requestCameraPermission() },
-            onScan = {
-                try {
-                    context.startActivity(Intent(context, ScanActivity::class.java))
-                } catch (_: Exception) {
-                    Toast.makeText(context, "Не удалось открыть камеру", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onOpenHost = { target ->
-                context.startActivity(
-                    Intent(context, RemoteActivity::class.java)
-                        .setData(Uri.parse(target.deepLink))
+            Spacer(modifier = Modifier.height(12.dp))
+            AddressCard(
+                address = address,
+                webUrl = webUrl,
+                galleryUrl = galleryUrl,
+                libraryUrl = galleryUrl?.replace("/gallery", "/library"),
+                shareUrl = shareUrl,
+                running = isServiceRunning,
+                onOpen = { url -> openBrowser(context, url) },
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            VaultCard(
+                pending = vaultPending,
+                autoPending = vaultAutoPending,
+                onClick = {
+                    try {
+                        context.startActivity(Intent(context, VaultActivity::class.java))
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "Не удалось открыть хранилище", Toast.LENGTH_SHORT).show()
+                    }
+                },
+            )
+
+            // Режим доступа виден только при работающем сервере: тумблер и переключение
+            // режима — часть одного действия «открыть телефон в сеть».
+            if (isServiceRunning) {
+                Spacer(modifier = Modifier.height(12.dp))
+                AccessModeCard(
+                    mode = accessMode,
+                    fileCount = files.size,
+                    onModeChange = { mode ->
+                        accessMode = mode
+                        AccessModeStore.set(context, mode)
+                    },
+                    onPickSelection = { showSelection = true },
+                    onPickDate = { pickDate(context) { epochDay ->
+                        val mode = AccessMode.Period.OnDate(epochDay)
+                        accessMode = mode
+                        AccessModeStore.set(context, mode)
+                    } },
                 )
-            },
-        )
+            }
 
-        if (GallerySaver.canPublish()) {
             Spacer(modifier = Modifier.height(12.dp))
-            GalleryCopyCard(
-                checked = galleryCopy,
-                onCheckedChange = { checked ->
-                    galleryCopy = checked
-                    GallerySaver.setEnabled(context, checked)
+            ConnectCard(
+                hosts = recentHosts,
+                cameraGranted = cameraAccess,
+                onGrantCamera = { (context as? MainActivity)?.requestCameraPermission() },
+                onScan = {
+                    try {
+                        context.startActivity(Intent(context, ScanActivity::class.java))
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "Не удалось открыть камеру", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onOpenHost = { target ->
+                    context.startActivity(
+                        Intent(context, RemoteActivity::class.java)
+                            .setData(Uri.parse(target.deepLink))
+                    )
                 },
             )
-        }
+
+            if (GallerySaver.canPublish()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                GalleryCopyCard(
+                    checked = galleryCopy,
+                    onCheckedChange = { checked ->
+                        galleryCopy = checked
+                        GallerySaver.setEnabled(context, checked)
+                    },
+                )
+            }
 
         if (!mediaAccess) {
             Spacer(modifier = Modifier.height(12.dp))
             MediaAccessCard(onGrant = { (context as? MainActivity)?.requestMediaPermissions() })
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
-        if (selectionMode) {
-            SelectionHeader(
-                count = selectedEntries.size,
-                allSelected = allVisibleSelected,
-                canArchive = selectedFiles.isNotEmpty() && ArchiveManager.isConfigured(context),
-                onSelectAll = {
-                    selectedPaths = if (allVisibleSelected) {
-                        emptySet()
-                    } else {
-                        filteredEntries.map { it.path }.toSet()
+        if (pendingDeletes > 0) {
+            Spacer(modifier = Modifier.height(12.dp))
+            DeleteConsentCard(
+                count = pendingDeletes,
+                onConfirm = {
+                    try {
+                        context.startActivity(Intent(context, DeleteConsentActivity::class.java))
+                    } catch (_: Exception) {
+                        Toast.makeText(
+                            context,
+                            "Не удалось открыть подтверждение",
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 },
-                canRename = selectedEntries.size == 1,
-                onDelete = { filesToDelete = selectedEntries },
-                onRename = { entryToRename = selectedEntries.firstOrNull() },
-                onMove = {
-                    moveFolders = fileSaver.folders()
-                },
-                onArchive = { filesToArchive = selectedFiles },
-                onCancel = { clearSelection() },
             )
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = if (currentPath.isEmpty()) "Принятые файлы" else currentPath.substringAfterLast('/'),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                TextButton(
-                    onClick = { showCreateFolder = true },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                ) {
-                    Text("＋ Папка", fontSize = 12.sp)
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                CountChip(
-                    text = if (query.isBlank()) entries.size.toString() else "${filteredEntries.size}/${entries.size}"
-                )
-            }
-            if (currentPath.isNotEmpty()) {
-                PathCrumbs(
-                    path = currentPath,
-                    onNavigate = { path -> navigateTo(path) },
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-        }
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = { Text("Поиск по файлам и папкам", fontSize = 14.sp) },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = .6f),
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(6.dp))
         }
 
-        if (filteredEntries.isEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyFiles(
-                    title = when {
-                        entries.isEmpty() && currentPath.isEmpty() -> "Пока нет принятых файлов"
-                        entries.isEmpty() -> "Папка пуста"
-                        else -> "Ничего не найдено"
+            Spacer(modifier = Modifier.height(18.dp))
+            if (selectionMode) {
+                SelectionHeader(
+                    count = selectedEntries.size,
+                    allSelected = allVisibleSelected,
+                    canArchive = selectedFiles.isNotEmpty() && ArchiveManager.isConfigured(context),
+                    onSelectAll = {
+                        selectedPaths = if (allVisibleSelected) {
+                            emptySet()
+                        } else {
+                            filteredEntries.map { it.path }.toSet()
+                        }
                     },
-                    hint = when {
-                        entries.isEmpty() && currentPath.isEmpty() ->
-                            "Перетащите файл в браузере — он появится здесь"
-                        entries.isEmpty() -> "Загрузите файл в браузере — он попадёт в эту папку"
-                        else -> "Измените запрос в поиске"
+                    canRename = selectedEntries.size == 1,
+                    onDelete = { filesToDelete = selectedEntries },
+                    onRename = { entryToRename = selectedEntries.firstOrNull() },
+                    onMove = {
+                        moveFolders = fileSaver.folders()
+                    },
+                    onArchive = { filesToArchive = selectedFiles },
+                    onCancel = { clearSelection() },
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (currentPath.isEmpty()) "Принятые файлы" else currentPath.substringAfterLast('/'),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    TextButton(
+                        onClick = { showCreateFolder = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text("＋ Папка", fontSize = 12.sp)
                     }
+                    Spacer(modifier = Modifier.weight(1f))
+                    CountChip(
+                        text = if (query.isBlank()) entries.size.toString() else "${filteredEntries.size}/${entries.size}"
+                    )
+                }
+                if (currentPath.isNotEmpty()) {
+                    PathCrumbs(
+                        path = currentPath,
+                        onNavigate = { path -> navigateTo(path) },
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Поиск по файлам и папкам", fontSize = 14.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = .6f),
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            }
+            }
+
+            if (filteredEntries.isEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyFiles(
+                        title = when {
+                            entries.isEmpty() && currentPath.isEmpty() -> "Пока нет принятых файлов"
+                            entries.isEmpty() -> "Папка пуста"
+                            else -> "Ничего не найдено"
+                        },
+                        hint = when {
+                            entries.isEmpty() && currentPath.isEmpty() ->
+                                "Перетащите файл в браузере — он появится здесь"
+                            entries.isEmpty() -> "Загрузите файл в браузере — он попадёт в эту папку"
+                            else -> "Измените запрос в поиске"
+                        }
+                    )
+                }
+            }
+            gridItems(filteredEntries, key = { it.path }) { entry ->
+                ReceivedFileTile(
+                    entry = entry,
+                    file = if (entry.isDirectory) null else fileSaver.resolve(entry.path),
+                    selected = entry.path in selectedPaths,
+                    selectionMode = selectionMode,
+                    onOpenFile = { file -> openFile(context, file) },
+                    onOpenFolder = { navigateTo(entry.path) },
+                    onSelect = {
+                        selectionMode = true
+                        selectedPaths = selectedPaths + entry.path
+                    },
+                    onToggle = {
+                        selectedPaths = if (entry.path in selectedPaths) {
+                            selectedPaths - entry.path
+                        } else {
+                            selectedPaths + entry.path
+                        }
+                    },
+                    onMenuRename = { entryToRename = entry },
+                    onMenuMove = {
+                        selectedPaths = setOf(entry.path)
+                        moveFolders = fileSaver.folders()
+                    },
+                    onMenuDelete = { filesToDelete = listOf(entry) },
                 )
             }
         }
-        gridItems(filteredEntries, key = { it.path }) { entry ->
-            ReceivedFileTile(
-                entry = entry,
-                file = if (entry.isDirectory) null else fileSaver.resolve(entry.path),
-                selected = entry.path in selectedPaths,
-                selectionMode = selectionMode,
-                onOpenFile = { file -> openFile(context, file) },
-                onOpenFolder = { navigateTo(entry.path) },
-                onSelect = {
-                    selectionMode = true
-                    selectedPaths = selectedPaths + entry.path
-                },
-                onToggle = {
-                    selectedPaths = if (entry.path in selectedPaths) {
-                        selectedPaths - entry.path
-                    } else {
-                        selectedPaths + entry.path
-                    }
-                },
-            )
-        }
+    // «Отменить» после удаления: файлы лежат в корзине и доступны со страницы /trash.
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .navigationBarsPadding()
+            .padding(16.dp),
+    )
     }
 
     if (showCreateFolder) {
@@ -855,6 +919,7 @@ private fun AddressCard(
     address: String,
     webUrl: String?,
     galleryUrl: String?,
+    libraryUrl: String?,
     shareUrl: String?,
     running: Boolean,
     onOpen: (String) -> Unit,
@@ -931,13 +996,32 @@ private fun AddressCard(
                     Text("Открыть страницу", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (galleryUrl != null) {
-                Text(
-                    text = "Галерея: открывается со страницы загрузки",
-                    fontSize = 11.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
+            if (galleryUrl != null || libraryUrl != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (galleryUrl != null) {
+                        OutlinedButton(
+                            onClick = { onOpen(galleryUrl) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Галерея", fontSize = 12.sp)
+                        }
+                    }
+                    if (libraryUrl != null) {
+                        OutlinedButton(
+                            onClick = { onOpen(libraryUrl) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Видеотека", fontSize = 12.sp)
+                        }
+                    }
+                }
             }
         }
     }
@@ -1109,6 +1193,38 @@ private fun MediaAccessCard(onGrant: () -> Unit) {
 }
 
 @Composable
+private fun DeleteConsentCard(count: Int, onConfirm: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = scheme.surface,
+        border = BorderStroke(1.dp, scheme.error.copy(alpha = .5f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = "Подтвердите удаление",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = if (count == 1) {
+                    "Браузер просит удалить фото или видео с телефона. Android требует подтверждения."
+                } else {
+                    "Браузер просит удалить элементов: $count. Android требует подтверждения."
+                },
+                fontSize = 11.5.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            TextButton(onClick = onConfirm, contentPadding = PaddingValues(0.dp)) {
+                Text("Подтвердить удаление", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun CountChip(text: String) {
     Surface(
         shape = RoundedCornerShape(999.dp),
@@ -1244,10 +1360,14 @@ private fun ReceivedFileTile(
     onOpenFolder: () -> Unit,
     onSelect: () -> Unit,
     onToggle: () -> Unit,
+    onMenuRename: () -> Unit,
+    onMenuMove: () -> Unit,
+    onMenuDelete: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val kind = if (entry.isDirectory) FileKind.FOLDER else file?.let { kindOf(it) } ?: FileKind.OTHER
     val shape = RoundedCornerShape(14.dp)
+    var menuOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .clip(shape)
@@ -1285,6 +1405,49 @@ private fun ReceivedFileTile(
                     letterSpacing = 0.4.sp,
                     color = kind.color,
                 )
+            }
+            // Меню на каждой плитке: удалить и переименовать можно без
+            // долгого нажатия и без входа в режим выделения.
+            if (!selectionMode && !selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x66000000))
+                        .border(1.dp, Color.White.copy(alpha = .55f), CircleShape)
+                        .clickable { menuOpen = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("⋮", fontSize = 16.sp, color = Color.White)
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Переименовать", fontSize = 13.sp) },
+                            onClick = {
+                                menuOpen = false
+                                onMenuRename()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Переместить", fontSize = 13.sp) },
+                            onClick = {
+                                menuOpen = false
+                                onMenuMove()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Удалить", fontSize = 13.sp, color = scheme.error) },
+                            onClick = {
+                                menuOpen = false
+                                onMenuDelete()
+                            },
+                        )
+                    }
+                }
             }
             if (selectionMode || selected) {
                 Box(

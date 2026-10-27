@@ -145,6 +145,8 @@ internal object WebTemplates {
   :root[data-theme="light"] .ftype[data-kind="audio"] { color: #0f766e; background: rgba(13, 148, 136, .12); border-color: rgba(13, 148, 136, .26); }
   :root[data-theme="light"] .ftype[data-kind="doc"] { color: #1d4ed8; background: rgba(59, 130, 246, .12); border-color: rgba(59, 130, 246, .26); }
   :root[data-theme="light"] .ftype[data-kind="archive"] { color: #b42318; background: rgba(244, 63, 94, .1); border-color: rgba(244, 63, 94, .24); }
+  /* Атрибут hidden должен побеждать display: flex у панелей и очередей. */
+  [hidden] { display: none !important; }
 """
 
     /** Кнопка темы: в тёмной теме показывает солнце, в светлой — луну. */
@@ -612,6 +614,39 @@ ${THEME_CSS}
     text-align: center;
   }
   li.empty small { color: var(--faint); font-size: 11.5px; }
+  .undo-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: calc(100vw - 32px);
+    padding: 9px 10px 9px 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--glass-strong);
+    backdrop-filter: blur(10px);
+    box-shadow: var(--shadow-strong);
+    font-size: 12.5px;
+  }
+  .undo-bar span { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .undo-bar button {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .undo-bar button:hover { background: var(--accent-soft); }
+  .undo-bar #undo-close { color: var(--muted); font-weight: 400; }
   .empty-icon {
     width: 38px;
     height: 38px;
@@ -666,6 +701,7 @@ ${THEME_CSS}
     <div class="top-actions">
       <span class="pill"><span class="dot"></span>Онлайн</span>
       ${THEME_BUTTON}
+      <a class="ghost-btn" href="/library">Видеотека</a>
       <a class="ghost-btn" href="/gallery">Галерея</a>
     </div>
   </header>
@@ -699,6 +735,7 @@ ${THEME_CSS}
   <div class="toolbar">
     <button class="ghost-btn btn-small" id="new-folder" type="button">＋ Папка</button>
     <a class="ghost-btn btn-small" id="zip-link" href="<!--ZIP_LINK-->">Скачать ZIP</a>
+    <!--TRASH_LINK-->
     <div class="view-switch" role="group" aria-label="Вид списка">
       <button id="view-grid" type="button" title="Показать сеткой">Сетка</button>
       <button id="view-list" type="button" title="Показать списком">Список</button>
@@ -743,6 +780,11 @@ ${THEME_CSS}
 
   <p class="note"><b>Нет звука у видео?</b> Браузер не поддерживает его аудиокодек (например, DTS/AC3 в MKV) — скачайте файл и откройте в VLC.</p>
 </main>
+<div class="undo-bar" id="undo-bar" role="status" hidden>
+  <span id="undo-text">Удалено</span>
+  <button id="undo-btn" type="button">Отменить</button>
+  <button id="undo-close" type="button" aria-label="Закрыть">×</button>
+</div>
 ${THEME_SCRIPT}
 <script>
 (function () {
@@ -1169,8 +1211,81 @@ ${THEME_SCRIPT}
       body: paths.join('\n')
     })
       .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
-      .then(function (data) { return !!(data && data.ok); })
-      .catch(function () { return false; });
+      .then(function (data) { return data || { ok: false }; })
+      .catch(function () { return { ok: false }; });
+  }
+
+  // Корзина: удалённое можно вернуть кнопкой внизу в течение 12 секунд
+  // (и позже — со страницы /trash).
+  var undoBar = document.getElementById('undo-bar');
+  var undoText = document.getElementById('undo-text');
+  var undoBtn = document.getElementById('undo-btn');
+  var undoClose = document.getElementById('undo-close');
+  var undoIds = [];
+  var undoTimer = 0;
+
+  function hideUndo() {
+    if (!undoBar) return;
+    undoIds = [];
+    undoBar.hidden = true;
+    if (undoTimer) { clearTimeout(undoTimer); undoTimer = 0; }
+  }
+
+  function bumpTrashLink(count) {
+    var link = document.getElementById('trash-link');
+    if (!link || !count) return;
+    var match = /\((\d+)\)/.exec(link.textContent);
+    var total = (match ? parseInt(match[1], 10) : 0) + count;
+    link.textContent = total > 0 ? 'Корзина (' + total + ')' : 'Корзина';
+  }
+
+  function showUndo(ids, count) {
+    if (!undoBar || !ids || !ids.length) return;
+    undoIds = ids;
+    if (undoText) {
+      undoText.textContent = count > 1 ? 'Удалено: ' + count : 'Удалено';
+    }
+    undoBar.hidden = false;
+    bumpTrashLink(ids.length);
+    if (undoTimer) clearTimeout(undoTimer);
+    undoTimer = setTimeout(hideUndo, 12000);
+  }
+
+  function restoreUndo() {
+    var ids = undoIds.slice();
+    hideUndo();
+    if (!ids.length) return;
+    fetch('/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: ids.join('\n')
+    })
+      .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+      .then(function (data) {
+        if (data && data.ok) location.reload();
+        else alert('Не удалось восстановить: элемент уже удалён окончательно');
+      })
+      .catch(function () { alert('Ошибка сети'); });
+  }
+
+  if (undoBtn) undoBtn.addEventListener('click', restoreUndo);
+  if (undoClose) undoClose.addEventListener('click', hideUndo);
+
+  function removeFileRow(button) {
+    var item = button.closest('li.file-item');
+    if (item) item.parentNode.removeChild(item);
+    updateSelection();
+  }
+
+  function removeSelectedRows() {
+    if (!filesList) return;
+    var boxes = filesList.querySelectorAll('input.sel');
+    for (var i = 0; i < boxes.length; i++) {
+      if (!boxes[i].checked) continue;
+      var row = boxes[i].closest('li.file-item');
+      if (row) row.parentNode.removeChild(row);
+    }
+    updateSelection();
   }
 
   function applyView(view) {
@@ -1226,14 +1341,12 @@ ${THEME_SCRIPT}
       var isDir = button.getAttribute('data-dir') === '1';
       var deletePath = button.getAttribute('data-path') || button.getAttribute('data-file') || '';
       if (!deletePath) return;
-      if (!confirm('Удалить ' + (isDir ? 'папку ' : 'файл ') + deletePath + '?')) return;
 
       if (isDir) {
-        postDelete([deletePath]).then(function (ok) {
-          if (ok) {
-            var item = button.closest('li.file-item');
-            if (item) item.parentNode.removeChild(item);
-            updateSelection();
+        postDelete([deletePath]).then(function (data) {
+          if (data.ok) {
+            removeFileRow(button);
+            showUndo(data.trash, data.deleted);
           } else {
             alert('Не удалось удалить папку');
           }
@@ -1247,9 +1360,8 @@ ${THEME_SCRIPT}
         .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
         .then(function (data) {
           if (data && data.ok) {
-            var item = button.closest('li.file-item');
-            if (item) item.parentNode.removeChild(item);
-            updateSelection();
+            removeFileRow(button);
+            showUndo(data.trash ? [data.trash] : [], 1);
           } else {
             alert('Не удалось удалить файл');
           }
@@ -1283,10 +1395,18 @@ ${THEME_SCRIPT}
     selDelete.addEventListener('click', function () {
       var paths = selectedPaths();
       if (!paths.length) return;
-      if (!confirm('Удалить выбранное: ' + paths.length + '?')) return;
-      postDelete(paths).then(function (ok) {
-        if (ok) location.reload();
-        else alert('Не всё удалось удалить');
+      postDelete(paths).then(function (data) {
+        if (!data.deleted) {
+          alert('Не удалось удалить выбранное');
+          return;
+        }
+        if (data.failed) {
+          // Часть файлов осталась: показываем реальное состояние списка.
+          location.reload();
+          return;
+        }
+        removeSelectedRows();
+        showUndo(data.trash, data.deleted);
       });
     });
   }
@@ -1521,10 +1641,33 @@ ${THEME_CSS}
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .card .badge {
+  .cell { position: relative; }
+  .cell .card { height: 100%; }
+  .media-del {
     position: absolute;
     top: 8px;
     right: 8px;
+    z-index: 2;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: var(--glass-strong);
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .18s, color .18s, background .18s, border-color .18s;
+  }
+  .cell:hover .media-del, .media-del:focus-visible { opacity: 1; }
+  .media-del:hover { color: var(--red); background: var(--err-soft); border-color: var(--err-line); }
+  @media (hover: none) { .media-del { opacity: 1; } }
+  .card .badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
     display: inline-flex;
     align-items: center;
     padding: 3px 7px;
@@ -1592,6 +1735,39 @@ document.querySelectorAll('img.thumb').forEach(function (img) {
     holder.className = 'none';
     holder.textContent = '▤';
     if (img.parentNode) img.parentNode.replaceChild(holder, img);
+  });
+});
+
+// Удаление прямо из сетки. Принятый файл уйдёт в корзину, а фото/видео
+// телефона Android удалит только после подтверждения на самом телефоне.
+document.querySelectorAll('.media-del').forEach(function (button) {
+  button.addEventListener('click', function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    var src = button.getAttribute('data-src') || '';
+    var id = button.getAttribute('data-id') || '';
+    var name = button.getAttribute('data-name') || '';
+    if (!src || !id) return;
+    if (!confirm('Удалить «' + name + '»?')) return;
+
+    fetch('/media/delete?src=' + encodeURIComponent(src) + '&id=' + encodeURIComponent(id), {
+      method: 'POST'
+    })
+      .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+      .then(function (data) {
+        if (data && data.ok) {
+          var cell = button.closest('.cell');
+          if (cell) cell.parentNode.removeChild(cell);
+          return;
+        }
+        if (data && data.needsConsent) {
+          alert('Android просит подтвердить удаление на телефоне: откройте LanDrop или уведомление «Подтвердите удаление».');
+          return;
+        }
+        alert('Не удалось удалить элемент');
+      })
+      .catch(function () { alert('Ошибка сети'); });
   });
 });
 </script>
@@ -1735,6 +1911,594 @@ ${THEME_SCRIPT}
     tried = false;
     tryOpen();
   });
+})();
+</script>
+</body>
+</html>"""
+
+    /**
+     * Видеотека: карточки видео с заголовком и описанием. Описание хранится
+     * рядом с файлом, страница — обычный список с диалогом редактирования.
+     */
+    val LIBRARY = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${THEME_BOOT}
+<title>Видеотека — LanDrop</title>
+<style>
+${THEME_CSS}
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    padding: 40px 20px 56px;
+    display: flex;
+    justify-content: center;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(900px 480px at 12% -8%, var(--glow-1), transparent 62%),
+      radial-gradient(760px 460px at 108% 2%, var(--glow-2), transparent 58%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: min(980px, 100%); }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 15px;
+    display: grid;
+    place-items: center;
+    color: var(--on-accent);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 10px 26px var(--accent-glow);
+  }
+  .logo svg { width: 22px; height: 22px; }
+  h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+  .brand-text p { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
+  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 12px;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .18s, border-color .18s;
+  }
+  .ghost-btn:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+  .ghost-btn.btn-small { padding: 6px 10px; font-size: 11.5px; }
+  .ghost-btn.primary { color: var(--on-accent); border-color: transparent; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .head { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+  h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .count {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .vcard {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--panel);
+    overflow: hidden;
+    transition: transform .18s, border-color .18s, box-shadow .18s;
+  }
+  .vcard:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: var(--shadow-strong); }
+  .vthumb {
+    position: relative;
+    display: block;
+    aspect-ratio: 16 / 9;
+    background: var(--thumb-bg);
+    overflow: hidden;
+  }
+  .vthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .vthumb .play {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-size: 26px;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, .7);
+  }
+  .vbody { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; min-width: 0; }
+  .vbody h3 {
+    margin: 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .vdesc {
+    margin: 0;
+    min-height: 2.9em;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--muted);
+    white-space: pre-line;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .vdesc.muted { color: var(--faint); font-style: italic; }
+  .vfoot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .vmeta { flex: 1; min-width: 0; font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vactions { display: flex; gap: 2px; flex: 0 0 auto; }
+  .edit, .del {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--faint);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .18s, background .18s, border-color .18s;
+  }
+  .edit:hover { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
+  .del { font-size: 17px; }
+  .del:hover { color: var(--red); background: var(--err-soft); border-color: var(--err-line); }
+  .empty {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    margin: 0;
+    padding: 24px 18px;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .empty small { flex-basis: 100%; color: var(--faint); font-size: 11.5px; }
+  .empty-icon {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    border-radius: 11px;
+    display: grid;
+    place-items: center;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    font-size: 14px;
+  }
+  .dlg {
+    width: min(440px, calc(100vw - 32px));
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: var(--shadow-strong);
+  }
+  .dlg::backdrop { background: rgba(0, 0, 0, .55); }
+  .dlg form { display: flex; flex-direction: column; gap: 10px; padding: 18px; }
+  .dlg h3 { margin: 0; font-size: 15px; }
+  .dlg p { margin: 0; font-size: 11.5px; color: var(--muted); word-break: break-word; }
+  .dlg input, .dlg textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--field);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+  }
+  .dlg textarea { resize: vertical; min-height: 120px; line-height: 1.45; }
+  .dlg input:focus, .dlg textarea:focus { border-color: var(--accent-border); }
+  .dlg-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .dlg-actions .reset { margin-right: auto; color: var(--muted); }
+  @media (max-width: 600px) {
+    body { padding: 20px 14px 40px; }
+    .brand-text p { display: none; }
+    .logo { width: 42px; height: 42px; border-radius: 13px; }
+    h1 { font-size: 16px; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 8 6 4-6 4V8z"/><rect x="3" y="4" width="18" height="16" rx="3"/></svg>
+      </div>
+      <div class="brand-text">
+        <h1>Видеотека</h1>
+        <p>Видео с заголовком и описанием</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      ${THEME_BUTTON}
+      <a class="ghost-btn btn-small" href="/trash">Корзина</a>
+      <a class="ghost-btn btn-small" href="/">К файлам</a>
+    </div>
+  </header>
+
+  <div class="head">
+    <h2>Видео</h2>
+    <span class="count"><!--LIBRARY_COUNT--></span>
+  </div>
+  <div class="grid"><!--LIBRARY_ITEMS--></div>
+
+  <dialog class="dlg" id="edit-dialog">
+    <form id="edit-form">
+      <h3>Описание видео</h3>
+      <p id="edit-name"></p>
+      <input id="edit-title" type="text" maxlength="200" placeholder="Заголовок" autocomplete="off">
+      <textarea id="edit-description" maxlength="5000" placeholder="Что происходит в видео"></textarea>
+      <div class="dlg-actions">
+        <button class="ghost-btn reset" id="edit-reset" type="button">Убрать описание</button>
+        <button class="ghost-btn" id="edit-cancel" type="button">Отмена</button>
+        <button class="ghost-btn primary" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+</main>
+${THEME_SCRIPT}
+<script>
+var LIBRARY_ITEMS = <!--LIBRARY_DATA-->;
+(function () {
+  var dialog = document.getElementById('edit-dialog');
+  var form = document.getElementById('edit-form');
+  var titleInput = document.getElementById('edit-title');
+  var descriptionInput = document.getElementById('edit-description');
+  var nameLabel = document.getElementById('edit-name');
+  var resetButton = document.getElementById('edit-reset');
+  var cancelButton = document.getElementById('edit-cancel');
+  var currentPath = '';
+
+  function openEditor(path) {
+    var item = LIBRARY_ITEMS[path];
+    if (!item || !dialog) return;
+    currentPath = path;
+    if (nameLabel) nameLabel.textContent = path;
+    if (titleInput) titleInput.value = item.title || '';
+    if (descriptionInput) descriptionInput.value = item.description || '';
+    if (resetButton) resetButton.hidden = !item.described;
+    dialog.showModal();
+  }
+
+  document.querySelectorAll('.edit').forEach(function (button) {
+    button.addEventListener('click', function () {
+      openEditor(button.getAttribute('data-path') || '');
+    });
+  });
+
+  document.querySelectorAll('.del').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var path = button.getAttribute('data-path') || '';
+      var name = button.getAttribute('data-name') || path;
+      if (!path) return;
+      if (!confirm('Удалить «' + name + '»? Видео переедет в корзину.')) return;
+      fetch('/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: path
+      })
+        .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+        .then(function (data) {
+          if (data && data.ok) location.reload();
+          else alert('Не удалось удалить видео');
+        })
+        .catch(function () { alert('Ошибка сети'); });
+    });
+  });
+
+  if (cancelButton) cancelButton.addEventListener('click', function () { dialog.close(); });
+
+  if (resetButton) resetButton.addEventListener('click', function () {
+    if (!currentPath) return;
+    fetch('/library/reset?path=' + encodeURIComponent(currentPath), { method: 'POST' })
+      .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+      .then(function (data) {
+        if (data && data.ok) location.reload();
+        else alert('Не удалось убрать описание');
+      })
+      .catch(function () { alert('Ошибка сети'); });
+  });
+
+  if (form) form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    if (!currentPath) return;
+    var url = '/library/save?path=' + encodeURIComponent(currentPath) +
+      '&title=' + encodeURIComponent(titleInput ? titleInput.value : '');
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: descriptionInput ? descriptionInput.value : ''
+    })
+      .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+      .then(function (data) {
+        if (data && data.ok) location.reload();
+        else alert('Не удалось сохранить описание');
+      })
+      .catch(function () { alert('Ошибка сети'); });
+  });
+})();
+</script>
+</body>
+</html>"""
+
+    /**
+     * Корзина: удалённые элементы можно вернуть на место или стереть навсегда.
+     * Список рендерится сервером, действия — обычными POST/DELETE.
+     */
+    val TRASH = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${THEME_BOOT}
+<title>LanDrop — корзина</title>
+<style>
+${THEME_CSS}
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    padding: 40px 20px 56px;
+    display: flex;
+    justify-content: center;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(900px 480px at 12% -8%, var(--glow-1), transparent 62%),
+      radial-gradient(760px 460px at 108% 2%, var(--glow-2), transparent 58%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: min(760px, 100%); }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 15px;
+    display: grid;
+    place-items: center;
+    color: var(--on-accent);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 10px 26px var(--accent-glow);
+  }
+  .logo svg { width: 22px; height: 22px; }
+  h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+  .brand-text p { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
+  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 12px;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .18s, border-color .18s;
+  }
+  .ghost-btn:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+  .btn-small { padding: 6px 10px; font-size: 11.5px; }
+  .ghost-btn.danger { color: var(--red); border-color: var(--err-line); }
+  .ghost-btn.danger:hover { background: var(--err-soft); border-color: var(--err-line); }
+  .head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+  h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .count {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .grow { flex: 1 1 auto; }
+  ul.files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  li.file-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px 10px 10px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+    transition: background .18s, border-color .18s;
+  }
+  li.file-item:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+  .file-thumb { position: relative; flex: 0 0 auto; width: 42px; height: 42px; }
+  .file-thumb .ftype { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ftype {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-line);
+  }
+  .ftype[data-kind="image"] { color: #ffc078; background: rgba(255, 192, 120, .1); border-color: rgba(255, 192, 120, .2); }
+  .ftype[data-kind="video"] { color: #c4a2ff; background: rgba(196, 162, 255, .1); border-color: rgba(196, 162, 255, .2); }
+  .ftype[data-kind="audio"] { color: #6ee7d8; background: rgba(110, 231, 216, .1); border-color: rgba(110, 231, 216, .2); }
+  .ftype[data-kind="doc"] { color: #8ab4f8; background: rgba(138, 180, 248, .1); border-color: rgba(138, 180, 248, .2); }
+  .ftype[data-kind="archive"] { color: #ffb4a2; background: rgba(255, 180, 162, .1); border-color: rgba(255, 180, 162, .2); }
+  .file-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+  .file { color: var(--text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+  .restore, .del {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--faint);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .18s, background .18s, border-color .18s;
+  }
+  .restore:hover { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
+  .del { font-size: 18px; }
+  .del:hover { color: var(--red); background: var(--err-soft); border-color: var(--err-line); }
+  li.empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 26px 16px;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+  }
+  li.empty small { color: var(--faint); font-size: 11.5px; }
+  .note {
+    margin: 18px 0 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--drop-bg);
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .note b { color: var(--strong); font-weight: 600; }
+  @media (max-width: 600px) {
+    body { padding: 20px 14px 40px; }
+    .brand-text p { display: none; }
+    .logo { width: 42px; height: 42px; border-radius: 13px; }
+    h1 { font-size: 16px; }
+    .meta { font-size: 11px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+      </div>
+      <div class="brand-text">
+        <h1>Корзина</h1>
+        <p>Удалённые файлы можно вернуть на место</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      ${THEME_BUTTON}
+      <a class="ghost-btn" href="/">К файлам</a>
+    </div>
+  </header>
+
+  <div class="head">
+    <h2>Удалено</h2>
+    <span class="count"><!--TRASH_COUNT--></span>
+    <span class="grow"></span>
+    <!--TRASH_CLEAR-->
+  </div>
+  <ul class="files" id="items"><!--TRASH_ITEMS--></ul>
+
+  <p class="note">Элементы хранятся в скрытой папке <b>.trash</b> и не видны в списке файлов. «Очистить корзину» удаляет их безвозвратно.</p>
+</main>
+${THEME_SCRIPT}
+<script>
+(function () {
+  var list = document.getElementById('items');
+
+  function post(url) {
+    return fetch(url, { method: 'POST' })
+      .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+      .catch(function () { return { ok: false }; });
+  }
+
+  function reload() { location.reload(); }
+
+  if (list) {
+    list.addEventListener('click', function (e) {
+      var button = e.target;
+      if (!button) return;
+      var id = button.getAttribute('data-id') || '';
+      if (!id) return;
+
+      if (button.className === 'restore') {
+        post('/restore?id=' + encodeURIComponent(id)).then(function (data) {
+          if (data && data.ok) reload();
+          else alert('Не удалось восстановить элемент');
+        });
+        return;
+      }
+
+      if (button.className !== 'del') return;
+      if (!confirm('Удалить навсегда? Восстановить этот элемент больше не получится.')) return;
+      fetch('/trash/' + encodeURIComponent(id), { method: 'DELETE' })
+        .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+        .then(function (data) {
+          if (data && data.ok) {
+            var row = button.closest('li.file-item');
+            if (row) row.parentNode.removeChild(row);
+            var left = list.querySelectorAll('li.file-item').length;
+            var count = document.querySelector('.count');
+            if (count) count.textContent = left;
+            if (!left) reload();
+          } else {
+            alert('Не удалось удалить элемент');
+          }
+        })
+        .catch(function () { alert('Ошибка сети'); });
+    });
+  }
+
+  var empty = document.getElementById('trash-empty');
+  if (empty) {
+    empty.addEventListener('click', function () {
+      if (!confirm('Удалить всё из корзины навсегда?')) return;
+      post('/trash/empty').then(function (data) {
+        if (data && data.ok) reload();
+        else alert('Не удалось очистить корзину');
+      });
+    });
+  }
 })();
 </script>
 </body>

@@ -3,6 +3,7 @@ package Code_SyS.nas_server
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import java.io.InputStream
 
@@ -110,6 +111,40 @@ class DeviceMediaSource(private val context: Context) : MediaSource {
         val uri = uriOf(item) ?: return null
         val mediaId = item.id.substringAfter('/').toLongOrNull() ?: return null
         return Thumbnails.fromUri(context, uri, item.mimeType, mediaId)
+    }
+
+    /**
+     * Удаляет фото или видео телефона. На Android 11+ чужие медиа можно
+     * удалить только после подтверждения: тогда запрос откладывается и
+     * показывается карточка/уведомление в приложении.
+     */
+    override fun delete(item: MediaItem): MediaDeleteResult {
+        val uri = uriOf(item) ?: return MediaDeleteResult.NOT_FOUND
+        return try {
+            val deleted = context.contentResolver.delete(uri, null, null)
+            if (deleted > 0) {
+                invalidate()
+                MediaDeleteResult.DELETED
+            } else {
+                MediaDeleteResult.NOT_FOUND
+            }
+        } catch (_: SecurityException) {
+            // Системный диалог подтверждения есть только на Android 11+.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                PendingDeletes.request(context, uri)
+                MediaDeleteResult.NEEDS_CONSENT
+            } else {
+                MediaDeleteResult.FAILED
+            }
+        } catch (_: Exception) {
+            MediaDeleteResult.FAILED
+        }
+    }
+
+    /** Сбрасывает кэш после удаления — сетка не должна показывать исчезнувший снимок. */
+    fun invalidate() {
+        cache = null
+        cacheTime = 0L
     }
 
     private fun uriOf(item: MediaItem): Uri? {
