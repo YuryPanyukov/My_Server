@@ -49,6 +49,8 @@ class HttpFileBrowsingTest {
             socketTimeoutMs = 5_000,
             saver = saver,
             fileLister = { dir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList() },
+            storageRoot = { dir },
+            folderSaver = { name, size, target, input -> FileSaver.writeTo(target, name, size, input) },
             fileThumbnailer = thumbnailer,
         )
         created.start()

@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * Минимальный HTTP/1.1-обработчик, работающий на том же порту, что и бинарный
@@ -20,9 +22,15 @@ import java.util.Locale
  *   `GET /`             — страница загрузки и список принятых файлов;
  *   `GET /health`       — проверка доступности, отвечает `OK`;
  *   `GET /open`         — страница-мостик из QR: приложение или веб-интерфейс;
- *   `GET /api/files`    — список принятых файлов в JSON;
- *   `GET /files/<имя>`  — содержимое файла (превью для картинок, видео, PDF и текста);
- *   `DELETE /files/<имя>` — удаление файла;
+ *   `GET /api/files`    — содержимое папки (файлы и вложенные папки) в JSON;
+ *   `GET /api/folders`  — все папки хранилища (для перемещения);
+ *   `GET /files/<путь>` — содержимое файла (превью для картинок, видео, PDF и текста);
+ *   `DELETE /files/<путь>` — удаление файла или папки (`?recursive=1`);
+ *   `GET /zip?path=<путь>` — текущая папка одним ZIP-архивом;
+ *   `POST /folder?path=<путь>&name=<имя>` — создание папки;
+ *   `POST /rename?path=<путь>&name=<имя>` — переименование;
+ *   `POST /move?path=<путь>&to=<папка>` — перемещение;
+ *   `POST /delete` — удаление списка путей (по одному в строке);
  *   `GET /gallery`      — галерея фото и видео (принятые файлы + медиатека телефона);
  *   `GET /view?src=<источник>&id=<элемент>` — просмотр с листанием стрелками и свайпами;
  *   `GET /api/media`    — элементы галереи в JSON;
@@ -34,8 +42,10 @@ import java.util.Locale
  *
  * Класс не зависит от Android API и проверяется JVM-тестами.
  *
- * @param saver запись файла; тот же колбэк, что и у бинарного протокола
- * @param files список доступных для просмотра файлов (обычно папка приёма)
+ * @param saver запись файла в корень; тот же колбэк, что и у бинарного протокола
+ * @param files список доступных для просмотра файлов (уже отфильтрованный режимом доступа)
+ * @param storageRoot корень папки приёма; без него страница работает по плоскому списку [files]
+ * @param folderSaver запись файла в выбранную вложенную папку
  * @param mediaSources источники для галереи (принятые файлы, медиатека телефона)
  * @param fileThumbnailer превью принятого файла для списка (`null` — тип без превью)
  * @param logger приёмник диагностических сообщений
@@ -43,6 +53,8 @@ import java.util.Locale
 class HttpRequestHandler(
     private val saver: (fileName: String, fileSize: Long, input: InputStream) -> File?,
     private val files: () -> List<File> = { emptyList() },
+    private val storageRoot: () -> File? = { null },
+    private val folderSaver: ((fileName: String, fileSize: Long, dir: File, input: InputStream) -> File?)? = null,
     private val mediaSources: () -> List<MediaSource> = { emptyList() },
     private val fileThumbnailer: (File) -> ByteArray? = { null },
     private val logger: (String) -> Unit = {},
@@ -80,9 +92,22 @@ class HttpRequestHandler(
             "GET", "HEAD" -> {
                 val headOnly = request.method == "HEAD"
                 when {
-                    request.path == "/" || request.path == "/index.html" -> writeResponse(
-                        output, 200, "OK", CONTENT_TYPE_HTML, renderPage(files()), includeBody = !headOnly
-                    )
+                    request.path == "/" || request.path == "/index.html" -> {
+                        val currentPath = StoragePaths.normalize(request.query["path"])
+                        if (currentPath == null) {
+                            notFound(output)
+                        } else {
+                            val entries = entriesFor(currentPath)
+                            if (entries == null) {
+                                notFound(output)
+                            } else {
+                                writeResponse(
+                                    output, 200, "OK", CONTENT_TYPE_HTML,
+                                    renderPage(entries, currentPath), includeBody = !headOnly
+                                )
+                            }
+                        }
+                    }
 
                     request.path == "/health" -> writeResponse(
                         output, 200, "OK", CONTENT_TYPE_TEXT, "OK".toByteArray(), includeBody = !headOnly
@@ -93,9 +118,30 @@ class HttpRequestHandler(
                         renderOpenPage(request.headers["host"]), includeBody = !headOnly
                     )
 
-                    request.path == "/api/files" -> writeResponse(
+                    request.path == "/api/files" -> {
+                        val currentPath = StoragePaths.normalize(request.query["path"])
+                        if (currentPath == null) {
+                            notFound(output)
+                        } else {
+                            val entries = entriesFor(currentPath)
+                            if (entries == null) {
+                                notFound(output)
+                            } else {
+                                writeResponse(
+                                    output, 200, "OK", CONTENT_TYPE_JSON,
+                                    filesJson(entries, currentPath).toByteArray(), includeBody = !headOnly
+                                )
+                            }
+                        }
+                    }
+
+                    request.path == "/api/folders" -> writeResponse(
                         output, 200, "OK", CONTENT_TYPE_JSON,
-                        filesJson(files()).toByteArray(), includeBody = !headOnly
+                        foldersJson().toByteArray(), includeBody = !headOnly
+                    )
+
+                    request.path == "/zip" -> serveZip(
+                        request.query["path"], output, headOnly
                     )
 
                     request.path.startsWith(FILES_PATH_PREFIX) -> serveStoredFile(
@@ -137,14 +183,18 @@ class HttpRequestHandler(
                 }
             }
 
-            "POST", "PUT" -> if (request.path == "/upload") {
-                upload(request, body, output)
-            } else {
-                notFound(output)
+            "POST", "PUT" -> when (request.path) {
+                "/upload" -> upload(request, body, output)
+                "/folder" -> createFolder(request, output)
+                "/rename" -> renameEntry(request, output)
+                "/move" -> moveEntry(request, output)
+                "/delete" -> deleteMany(request, body, output)
+                else -> notFound(output)
             }
 
             "DELETE" -> if (request.path.startsWith(FILES_PATH_PREFIX)) {
-                deleteStoredFile(request.path.removePrefix(FILES_PATH_PREFIX), output)
+                val recursive = request.query["recursive"] == "1" || request.query["recursive"] == "true"
+                deleteStoredFile(request.path.removePrefix(FILES_PATH_PREFIX), recursive, output)
             } else {
                 notFound(output)
             }
@@ -175,6 +225,16 @@ class HttpRequestHandler(
             return
         }
 
+        // Пустая папка — корень хранилища, как было до появления папок.
+        val targetPath = StoragePaths.normalize(request.query["path"])
+        if (targetPath == null) {
+            writeResponse(
+                output, 400, "Bad Request", CONTENT_TYPE_JSON,
+                errorJson("Недопустимый путь папки").toByteArray()
+            )
+            return
+        }
+
         val contentLength = request.headers["content-length"]?.toLongOrNull()
         if (contentLength == null || contentLength < 0) {
             writeResponse(
@@ -185,7 +245,13 @@ class HttpRequestHandler(
         }
 
         val saved = try {
-            saver(fileName, contentLength, body)
+            if (targetPath.isEmpty()) {
+                saver(fileName, contentLength, body)
+            } else {
+                val dir = ReceivedStorage(storageRoot).resolve(targetPath)
+                if (dir == null || !dir.isDirectory) null
+                else folderSaver?.invoke(fileName, contentLength, dir, body)
+            }
         } catch (e: Exception) {
             logger("HTTP: ошибка сохранения $fileName: ${e.message}")
             null
@@ -200,7 +266,9 @@ class HttpRequestHandler(
         }
 
         logger("HTTP: сохранён ${saved.name} (${saved.length()} байт)")
-        val json = "{\"ok\":true,\"name\":\"${jsonEscape(saved.name)}\",\"size\":${saved.length()}}"
+        val storedPath = storageRoot()?.let { StoragePaths.relativePath(it, saved) } ?: saved.name
+        val json = "{\"ok\":true,\"name\":\"${jsonEscape(saved.name)}\"," +
+            "\"path\":\"${jsonEscape(storedPath)}\",\"size\":${saved.length()}}"
         writeResponse(output, 200, "OK", CONTENT_TYPE_JSON, json.toByteArray())
     }
 
@@ -217,7 +285,7 @@ class HttpRequestHandler(
         output: OutputStream,
         headOnly: Boolean,
     ) {
-        val file = files().firstOrNull { it.isFile && it.name == name }
+        val file = resolveAllowedFile(name)
         if (file == null) {
             notFound(output)
             return
@@ -287,18 +355,52 @@ class HttpRequestHandler(
         append("\r\n")
     }
 
-    /** Удаляет файл из хранилища; удаляются только файлы из списка [files]. */
-    private fun deleteStoredFile(name: String, output: OutputStream) {
-        val file = files().firstOrNull { it.isFile && it.name == name }
-        if (file == null) {
+    /**
+     * Удаляет файл, а с `?recursive=1` — папку со всем содержимым.
+     * Удаляются только пути, видимые в текущем режиме доступа.
+     */
+    private fun deleteStoredFile(path: String, recursive: Boolean, output: OutputStream) {
+        val relative = StoragePaths.normalize(path)
+        if (relative == null || relative.isEmpty()) {
             notFound(output)
             return
         }
 
+        val root = storageRoot()
+        val legacyFile = if (root == null) files().firstOrNull { it.isFile && it.name == relative } else null
+        val storage = if (root != null) ReceivedStorage { root } else null
+        val entry = storage?.entry(relative)
+
+        if ((root != null && entry == null) || (root == null && legacyFile == null)) {
+            notFound(output)
+            return
+        }
+
+        if (entry != null && entry.isDirectory && !recursive) {
+            writeResponse(
+                output, 409, "Conflict", CONTENT_TYPE_JSON,
+                errorJson("Это папка: добавьте ?recursive=1").toByteArray()
+            )
+            return
+        }
+        if (!isAllowedForDelete(relative, entry?.isDirectory == true)) {
+            // Скрытый файл не должен выдавать себя даже кодом ответа — 404,
+            // как и все ссылки на него в режиме частичного доступа.
+            if (entry != null && !entry.isDirectory) {
+                notFound(output)
+            } else {
+                writeResponse(
+                    output, 403, "Forbidden", CONTENT_TYPE_JSON,
+                    errorJson("В этом режиме доступа папку с закрытыми файлами удалить нельзя").toByteArray()
+                )
+            }
+            return
+        }
+
         val deleted = try {
-            file.delete()
+            legacyFile?.delete() ?: storage?.delete(relative) ?: false
         } catch (e: Exception) {
-            logger("HTTP: ошибка удаления ${file.name}: ${e.message}")
+            logger("HTTP: ошибка удаления $relative: ${e.message}")
             false
         }
 
@@ -310,11 +412,43 @@ class HttpRequestHandler(
             return
         }
 
-        logger("HTTP: удалён ${file.name}")
+        logger("HTTP: удалён $relative")
         writeResponse(
             output, 200, "OK", CONTENT_TYPE_JSON,
-            "{\"ok\":true,\"name\":\"${jsonEscape(file.name)}\"}".toByteArray()
+            "{\"ok\":true,\"path\":\"${jsonEscape(relative)}\"}".toByteArray()
         )
+    }
+
+    /** Разрешённый к отдаче файл: путь разбирается и сверяется с режимом доступа. */
+    private fun resolveAllowedFile(path: String): File? {
+        val root = storageRoot()
+        if (root == null) return files().firstOrNull { it.isFile && it.name == path }
+
+        val relative = StoragePaths.normalize(path) ?: return null
+        if (relative.isEmpty()) return null
+        val file = ReceivedStorage { root }.resolve(relative) ?: return null
+        if (!file.isFile || relative !in allowedRelatives(root)) return null
+        return file
+    }
+
+    private fun allowedRelatives(root: File): Set<String> =
+        files().mapNotNull { StoragePaths.relativePath(root, it) }.toSet()
+
+    /**
+     * Удаление папки, в которой есть скрытые режимом доступа файлы, запрещено:
+     * иначе клиент мог бы унести с телефона то, что ему не показывали.
+     */
+    private fun isAllowedForDelete(relative: String, directory: Boolean): Boolean {
+        val root = storageRoot() ?: return true
+        if (!directory) return relative in allowedRelatives(root)
+
+        val allowed = allowedRelatives(root)
+        val storage = ReceivedStorage { root }
+        val prefix = "$relative/"
+        return storage.allFiles().all { file ->
+            val path = StoragePaths.relativePath(root, file) ?: return@all false
+            !path.startsWith(prefix) || path in allowed
+        }
     }
 
     // --- Галерея фото и видео ------------------------------------------------
@@ -477,7 +611,7 @@ class HttpRequestHandler(
         headOnly: Boolean,
     ) {
         val name = query["name"]
-        val file = if (name == null) null else files().firstOrNull { it.isFile && it.name == name }
+        val file = if (name == null) null else resolveAllowedFile(name)
         if (file == null) {
             notFound(output)
             return
@@ -491,7 +625,10 @@ class HttpRequestHandler(
         }
 
         if (thumbnail == null) {
-            serveStoredFile(file.name, null, output, headOnly)
+            // Оригинал отдаём по тому же относительному пути: файл может лежать
+            // во вложенной папке, а `file.name` указывал бы на корень.
+            val relative = storageRoot()?.let { StoragePaths.relativePath(it, file) } ?: file.name
+            serveStoredFile(relative, null, output, headOnly)
             return
         }
 
@@ -642,53 +779,118 @@ class HttpRequestHandler(
             .toByteArray(StandardCharsets.UTF_8)
     }
 
-    private fun renderPage(entries: List<File>): ByteArray {
+    private fun renderPage(entries: List<StorageEntry>, currentPath: String): ByteArray {
         val rows = if (entries.isEmpty()) {
-            "<li class=\"empty\"><span class=\"empty-icon\">✦</span>" +
-                "<span>Пока нет файлов</span>" +
-                "<small>Перетащите первый файл в область выше</small></li>"
+            if (currentPath.isEmpty()) {
+                "<li class=\"empty\"><span class=\"empty-icon\">✦</span>" +
+                    "<span>Пока нет файлов</span>" +
+                    "<small>Перетащите первый файл в область выше</small></li>"
+            } else {
+                "<li class=\"empty\"><span class=\"empty-icon\">▤</span>" +
+                    "<span>Папка пуста</span>" +
+                    "<small>Перетащите файл в область выше — он попадёт сюда</small></li>"
+            }
         } else {
             val dateFormat = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
             buildString {
-                for (file in entries) {
-                    val kind = fileKind(file)
+                for (entry in entries) {
+                    if (entry.isDirectory) {
+                        append("<li class=\"file-item folder\" data-name=\"")
+                            .append(htmlEscape(entry.name.lowercase(Locale.ROOT)))
+                            .append("\" data-path=\"").append(htmlEscape(entry.path))
+                            .append("\" data-dir=\"1\"><label class=\"pick\" title=\"Выбрать\">")
+                            .append("<input type=\"checkbox\" class=\"sel\" data-path=\"")
+                            .append(htmlEscape(entry.path)).append("\"></label>")
+                            .append("<span class=\"file-thumb folder-thumb\"><span class=\"ftype\" data-kind=\"folder\">DIR</span></span>")
+                            .append("<span class=\"file-main\"><a class=\"file\" href=\"/?path=")
+                            .append(encodeRelativePath(entry.path)).append("\">")
+                            .append(htmlEscape(entry.name)).append("</a>")
+                            .append("<span class=\"meta\">Папка</span></span>")
+                            .append("<span class=\"file-actions\"><button class=\"ren\" type=\"button\" ")
+                            .append("title=\"Переименовать\" aria-label=\"Переименовать\" data-path=\"")
+                            .append(htmlEscape(entry.path)).append("\" data-name=\"")
+                            .append(htmlEscape(entry.name)).append("\">✎</button>")
+                            .append("<button class=\"del\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить\" data-dir=\"1\" data-path=\"")
+                            .append(htmlEscape(entry.path)).append("\" data-file=\"")
+                            .append(htmlEscape(entry.name)).append("\">×</button></span></li>")
+                        continue
+                    }
+
+                    val kind = fileKind(entry.name)
+                    val encodedPath = encodeRelativePath(entry.path)
                     append("<li class=\"file-item\" data-name=\"")
-                        .append(htmlEscape(file.name.lowercase(Locale.ROOT)))
-                        .append("\"><span class=\"file-thumb\" data-kind=\"").append(kind).append("\">")
+                        .append(htmlEscape(entry.name.lowercase(Locale.ROOT)))
+                        .append("\" data-path=\"").append(htmlEscape(entry.path))
+                        .append("\" data-dir=\"0\"><label class=\"pick\" title=\"Выбрать\">")
+                        .append("<input type=\"checkbox\" class=\"sel\" data-path=\"")
+                        .append(htmlEscape(entry.path)).append("\"></label>")
+                        .append("<span class=\"file-thumb\" data-kind=\"").append(kind).append("\">")
                     // Превью запрашивается лениво и только для медиа: остальные
                     // типы показывают значок расширения.
                     if (kind == "image" || kind == "video") {
                         append("<img class=\"fthumb\" src=\"").append(THUMB_FILE_PATH)
-                            .append("?name=").append(encodePathSegment(file.name))
-                            .append("&amp;v=").append(file.lastModified())
+                            .append("?name=").append(encodedPath)
+                            .append("&amp;v=").append(entry.modified)
                             .append("\" loading=\"lazy\" decoding=\"async\" alt=\"\">")
                         if (kind == "video") append("<span class=\"play\" aria-hidden=\"true\">▶</span>")
                     }
                     append("<span class=\"ftype\" data-kind=\"").append(kind)
-                        .append("\">").append(htmlEscape(fileTypeLabel(file)))
+                        .append("\">").append(htmlEscape(fileTypeLabel(entry.name)))
                         .append("</span></span><span class=\"file-main\"><a class=\"file\" href=\"").append(FILES_PATH_PREFIX)
-                        .append(encodePathSegment(file.name))
+                        .append(encodedPath)
                         .append("\" target=\"_blank\" rel=\"noopener\">")
-                        .append(htmlEscape(file.name))
+                        .append(htmlEscape(entry.name))
                         .append("</a><span class=\"meta\">")
-                        .append(formatSize(file.length()))
+                        .append(formatSize(entry.size))
                         .append(" · ")
-                        .append(dateFormat.format(Date(file.lastModified())))
-                        .append("</span></span><button class=\"del\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить\" data-href=\"")
-                        .append(FILES_PATH_PREFIX).append(encodePathSegment(file.name))
-                        .append("\" data-file=\"").append(htmlEscape(file.name))
-                        .append("\">×</button></li>")
+                        .append(dateFormat.format(Date(entry.modified)))
+                        .append("</span></span><span class=\"file-actions\"><button class=\"ren\" type=\"button\" ")
+                        .append("title=\"Переименовать\" aria-label=\"Переименовать\" data-path=\"")
+                        .append(htmlEscape(entry.path)).append("\" data-name=\"")
+                        .append(htmlEscape(entry.name)).append("\">✎</button>")
+                        .append("<button class=\"del\" type=\"button\" title=\"Удалить\" aria-label=\"Удалить\" data-href=\"")
+                        .append(FILES_PATH_PREFIX).append(encodedPath)
+                        .append("\" data-path=\"").append(htmlEscape(entry.path))
+                        .append("\" data-file=\"").append(htmlEscape(entry.name))
+                        .append("\">×</button></span></li>")
                 }
             }
         }
+
+        val crumbs = buildString {
+            if (currentPath.isEmpty()) {
+                append("<span class=\"crumb current\">Все файлы</span>")
+            } else {
+                append("<a class=\"crumb\" href=\"/\">Все файлы</a>")
+                var accumulated = ""
+                val segments = currentPath.split('/')
+                for ((index, segment) in segments.withIndex()) {
+                    accumulated = if (accumulated.isEmpty()) segment else "$accumulated/$segment"
+                    append("<span class=\"crumb-sep\">/</span>")
+                    if (index == segments.lastIndex) {
+                        append("<span class=\"crumb current\">").append(htmlEscape(segment)).append("</span>")
+                    } else {
+                        append("<a class=\"crumb\" href=\"/?path=")
+                            .append(encodeRelativePath(accumulated)).append("\">")
+                            .append(htmlEscape(segment)).append("</a>")
+                    }
+                }
+            }
+        }
+
+        val zipLink = if (currentPath.isEmpty()) "/zip" else "/zip?path=" + encodeRelativePath(currentPath)
+
         return WebTemplates.PAGE
             .replace(FILES_MARKER, rows)
             .replace(FILE_COUNT_MARKER, entries.size.toString())
+            .replace(BREADCRUMBS_MARKER, crumbs)
+            .replace(CURRENT_PATH_MARKER, htmlEscape(currentPath))
+            .replace(ZIP_LINK_MARKER, zipLink)
             .toByteArray(StandardCharsets.UTF_8)
     }
 
     /** CSS-категория файла: от неё зависит цвет значка в списке. */
-    private fun fileKind(file: File): String = when (file.extension.lowercase(Locale.ROOT)) {
+    private fun fileKind(name: String): String = when (name.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
         "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg" -> "image"
         "mp4", "mkv", "mov", "avi", "webm", "m4v" -> "video"
         "mp3", "wav", "flac", "aac", "ogg", "m4a" -> "audio"
@@ -697,8 +899,8 @@ class HttpRequestHandler(
         else -> "other"
     }
 
-    private fun fileTypeLabel(file: File): String {
-        val extension = file.extension
+    private fun fileTypeLabel(name: String): String {
+        val extension = name.substringAfterLast('.', "")
         return if (extension.isEmpty()) "FILE" else extension.take(4).uppercase(Locale.ROOT)
     }
 
@@ -845,16 +1047,276 @@ class HttpRequestHandler(
         append("]}")
     }
 
-    private fun filesJson(entries: List<File>): String = buildString {
-        append("{\"files\":[")
-        entries.forEachIndexed { index, file ->
+    private fun filesJson(entries: List<StorageEntry>, currentPath: String): String = buildString {
+        append("{\"path\":\"").append(jsonEscape(currentPath)).append("\",\"files\":[")
+        entries.forEachIndexed { index, entry ->
             if (index > 0) append(',')
-            append("{\"name\":\"").append(jsonEscape(file.name)).append("\",")
-            append("\"size\":").append(file.length()).append(',')
-            append("\"modified\":").append(file.lastModified()).append('}')
+            append("{\"name\":\"").append(jsonEscape(entry.name)).append("\",")
+            append("\"path\":\"").append(jsonEscape(entry.path)).append("\",")
+            append("\"dir\":").append(entry.isDirectory).append(',')
+            append("\"size\":").append(entry.size).append(',')
+            append("\"modified\":").append(entry.modified).append('}')
         }
         append("]}")
     }
+
+    private fun foldersJson(): String {
+        val root = storageRoot()
+        val folders = if (root == null) emptyList() else ReceivedStorage { root }.folders()
+        return buildString {
+            append("{\"folders\":[")
+            folders.forEachIndexed { index, folder ->
+                if (index > 0) append(',')
+                append('\"').append(jsonEscape(folder)).append('\"')
+            }
+            append("]}")
+        }
+    }
+
+    /**
+     * Содержимое папки для страницы и API. `null` — путь недопустим или это
+     * не папка (HTTP ответит 404).
+     *
+     * Без [storageRoot] остаётся старое плоское поведение: только [files],
+     * только корень.
+     */
+    private fun entriesFor(path: String?): List<StorageEntry>? {
+        val normalized = StoragePaths.normalize(path) ?: return null
+        val root = storageRoot()
+        if (root == null) {
+            if (normalized.isNotEmpty()) return null
+            return files().map { file ->
+                StorageEntry(
+                    name = file.name,
+                    path = file.name,
+                    isDirectory = false,
+                    size = file.length(),
+                    modified = file.lastModified(),
+                )
+            }
+        }
+
+        val storage = ReceivedStorage { root }
+        val directory = storage.resolve(normalized) ?: return null
+        if (!directory.isDirectory) return null
+
+        val allowed = allowedRelatives(root)
+        return storage.entries(normalized).filter { entry ->
+            entry.isDirectory || entry.path in allowed
+        }
+    }
+
+    // --- Папки: создание, переименование, перемещение, ZIP --------------------
+
+    private fun createFolder(request: Request, output: OutputStream) {
+        val parent = request.query["path"] ?: ""
+        val name = request.query["name"].orEmpty()
+        val created = storageRoot()?.let { ReceivedStorage(storageRoot).createFolder(parent, name) }
+        if (created == null) {
+            writeResponse(
+                output, 400, "Bad Request", CONTENT_TYPE_JSON,
+                errorJson("Не удалось создать папку: проверьте имя и путь").toByteArray()
+            )
+            return
+        }
+        logger("HTTP: создана папка ${created.path}")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            ("{\"ok\":true,\"path\":\"${jsonEscape(created.path)}\"," +
+                "\"name\":\"${jsonEscape(created.name)}\"}").toByteArray()
+        )
+    }
+
+    private fun renameEntry(request: Request, output: OutputStream) {
+        val path = request.query["path"].orEmpty()
+        val name = request.query["name"].orEmpty()
+        val renamed = storageRoot()?.let { ReceivedStorage(storageRoot).rename(path, name) }
+        if (renamed == null) {
+            writeResponse(
+                output, 409, "Conflict", CONTENT_TYPE_JSON,
+                errorJson("Не удалось переименовать: имя занято или путь неверный").toByteArray()
+            )
+            return
+        }
+        logger("HTTP: переименовано в ${renamed.path}")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            ("{\"ok\":true,\"path\":\"${jsonEscape(renamed.path)}\"," +
+                "\"name\":\"${jsonEscape(renamed.name)}\"}").toByteArray()
+        )
+    }
+
+    private fun moveEntry(request: Request, output: OutputStream) {
+        val path = request.query["path"].orEmpty()
+        val target = request.query["to"] ?: ""
+        val moved = storageRoot()?.let { ReceivedStorage(storageRoot).move(path, target) }
+        if (moved == null) {
+            writeResponse(
+                output, 409, "Conflict", CONTENT_TYPE_JSON,
+                errorJson("Не удалось переместить: имя занято, папка недоступна или это она сама").toByteArray()
+            )
+            return
+        }
+        logger("HTTP: перемещено в ${moved.path}")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            "{\"ok\":true,\"path\":\"${jsonEscape(moved.path)}\"}".toByteArray()
+        )
+    }
+
+    /** Удаляет несколько путей за одно соединение (выделение на странице). */
+    private fun deleteMany(request: Request, body: InputStream, output: OutputStream) {
+        val storage = storageRoot()?.let { ReceivedStorage(storageRoot) }
+        if (storage == null) {
+            notFound(output)
+            return
+        }
+
+        val length = request.headers["content-length"]?.toLongOrNull() ?: -1L
+        if (length < 0 || length > MAX_BULK_DELETE_BYTES) {
+            writeResponse(
+                output, 400, "Bad Request", CONTENT_TYPE_JSON,
+                errorJson("Список на удаление пуст или слишком большой").toByteArray()
+            )
+            return
+        }
+
+        val text = try {
+            readLimited(body, length.toInt())
+        } catch (e: Exception) {
+            logger("HTTP: не удалось прочитать список на удаление: ${e.message}")
+            ""
+        }
+        val paths = text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .toList()
+
+        var deleted = 0
+        var failed = 0
+        for (path in paths) {
+            val relative = StoragePaths.normalize(path)
+            val entry = if (relative == null || relative.isEmpty()) null else storage.entry(relative)
+            if (relative == null || relative.isEmpty() || entry == null) {
+                failed++
+                continue
+            }
+            if (!isAllowedForDelete(relative, entry.isDirectory) || !storage.delete(relative)) {
+                failed++
+            } else {
+                deleted++
+            }
+        }
+
+        logger("HTTP: удалено $deleted, не удалось $failed")
+        writeResponse(
+            output, 200, "OK", CONTENT_TYPE_JSON,
+            "{\"ok\":${failed == 0},\"deleted\":$deleted,\"failed\":$failed}".toByteArray()
+        )
+    }
+
+    private fun readLimited(input: InputStream, limit: Int): String {
+        val buffer = ByteArrayOutputStream()
+        val chunk = ByteArray(4096)
+        var remaining = limit
+        while (remaining > 0) {
+            val read = input.read(chunk, 0, minOf(chunk.size, remaining))
+            if (read < 0) break
+            buffer.write(chunk, 0, read)
+            remaining -= read
+        }
+        return String(buffer.toByteArray(), StandardCharsets.UTF_8)
+    }
+
+    /**
+     * Скачивает папку одним ZIP-архивом (как в File Browser и Nextcloud).
+     * Длина ответа неизвестна, поэтому тело ограничивается закрытием соединения;
+     * все ответы сервера и так идут с `Connection: close`.
+     */
+    private fun serveZip(path: String?, output: OutputStream, headOnly: Boolean) {
+        val root = storageRoot()
+        if (root == null) {
+            notFound(output)
+            return
+        }
+        val storage = ReceivedStorage { root }
+        val normalized = StoragePaths.normalize(path) ?: run { notFound(output); return }
+        val directory = storage.resolve(normalized) ?: run { notFound(output); return }
+        if (!directory.isDirectory) {
+            notFound(output)
+            return
+        }
+
+        val allowed = allowedRelatives(root)
+        val archiveName = if (normalized.isEmpty()) "landrop.zip" else "${directory.name}.zip"
+        val headers = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Connection: close\r\n")
+            append("Content-Type: application/zip\r\n")
+            append("Content-Disposition: attachment; filename=\"").append(asciiFileName(archiveName))
+                .append("\"; filename*=UTF-8''").append(encodePathSegment(archiveName)).append("\r\n")
+            append("X-Content-Type-Options: nosniff\r\n")
+            append("Cache-Control: no-store\r\n\r\n")
+        }
+
+        try {
+            output.write(headers.toByteArray(StandardCharsets.UTF_8))
+            if (headOnly) {
+                output.flush()
+                return
+            }
+            val zip = ZipOutputStream(output)
+            addToZip(zip, storage, normalized, allowed, depth = 0)
+            zip.finish()
+            zip.flush()
+            output.flush()
+        } catch (e: IOException) {
+            logger("HTTP: ZIP для $normalized прерван: ${e.message}")
+        }
+    }
+
+    private fun addToZip(
+        zip: ZipOutputStream,
+        storage: ReceivedStorage,
+        archiveBase: String,
+        allowed: Set<String>,
+        depth: Int,
+    ) {
+        // Содержимое кладём от корня выбранной папки: «photos/2026/a.jpg»
+        // внутри photos.zip становится «2026/a.jpg».
+        fun prefixFor(folder: String): String = when {
+            folder.isEmpty() -> ""
+            folder == archiveBase -> ""
+            archiveBase.isEmpty() -> "$folder/"
+            else -> folder.removePrefix("$archiveBase/") + "/"
+        }
+
+        fun walk(folder: String, level: Int) {
+            if (level > StoragePaths.MAX_DEPTH) return
+            val prefix = prefixFor(folder)
+            for (entry in storage.entries(folder)) {
+                if (entry.isDirectory) {
+                    // Пустая папка тоже должна попасть в архив.
+                    zip.putNextEntry(ZipEntry(prefix + entry.name + "/"))
+                    zip.closeEntry()
+                    walk(entry.path, level + 1)
+                    continue
+                }
+                if (entry.path !in allowed) continue
+                val file = storage.resolve(entry.path) ?: continue
+                zip.putNextEntry(ZipEntry(prefix + entry.name))
+                file.inputStream().use { input -> input.copyTo(zip, Protocol.BUFFER_SIZE) }
+                zip.closeEntry()
+            }
+        }
+
+        walk(archiveBase, depth)
+    }
+
+    /** Процентное кодирование относительного пути: `/` остаётся разделителем. */
+    private fun encodeRelativePath(path: String): String =
+        path.split('/').joinToString("/") { encodePathSegment(it) }
 
     private fun formatSize(bytes: Long): String {
         if (bytes < 1024) return "$bytes Б"
@@ -1076,7 +1538,13 @@ class HttpRequestHandler(
         private const val THUMB_FILE_PATH = "/thumb-file"
         private const val FILES_MARKER = "<!--FILES-->"
         private const val FILE_COUNT_MARKER = "<!--FILE_COUNT-->"
+        private const val BREADCRUMBS_MARKER = "<!--BREADCRUMBS-->"
+        private const val CURRENT_PATH_MARKER = "<!--CURRENT_PATH-->"
+        private const val ZIP_LINK_MARKER = "<!--ZIP_LINK-->"
         private const val ALLOWED_METHODS = "GET, HEAD, POST, PUT, DELETE, OPTIONS"
+
+        /** Сколько байт списка путей принимаем на массовое удаление. */
+        private const val MAX_BULK_DELETE_BYTES = 64 * 1024
 
         /** Ключ источника медиатеки телефона; должен совпадать с `DeviceMediaSource.key`. */
         const val DEVICE_SOURCE_KEY = "device"

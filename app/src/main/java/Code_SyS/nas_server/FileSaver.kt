@@ -9,23 +9,58 @@ import java.io.InputStream
 
 class FileSaver(private val context: Context) {
 
+    /** Корень принятых файлов: Android/data/<package>/files/Download. */
+    val storageDir: File?
+        get() = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+
+    /** Та же папка как дерево каталогов: список, создание, перемещение, удаление. */
+    private val storage = ReceivedStorage { storageDir }
+
     /**
-     * Сохраняет файл в приватную внешнюю папку приложения
+     * Сохраняет файл в корень приватной внешней папки приложения
      * (Android/data/<package>/files/Download). Разрешение WRITE_EXTERNAL_STORAGE не требуется.
      */
-    fun save(fileName: String, fileSize: Long, input: InputStream): File? {
-        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return null
-        return writeTo(dir, fileName, fileSize, input)
+    fun save(fileName: String, fileSize: Long, input: InputStream): File? =
+        save(storageDir, fileName, fileSize, input)
+
+    /**
+     * Сохраняет файл в выбранную вложенную папку [path] (пустая строка — корень).
+     * Несуществующая папка и путь за пределы хранилища дают `null`.
+     */
+    fun save(path: String, fileName: String, fileSize: Long, input: InputStream): File? {
+        val dir = storage.resolve(path) ?: return null
+        if (!dir.isDirectory) return null
+        return save(dir, fileName, fileSize, input)
+    }
+
+    private fun save(dir: File?, fileName: String, fileSize: Long, input: InputStream): File? {
+        val target = dir ?: return null
+        return writeTo(target, fileName, fileSize, input)
     }
 
     /**
-     * Файлы, уже принятые в папку приложения, от новых к старым.
-     * Используется HTTP-страницей для списка и просмотра.
+     * Все принятые файлы, включая вложенные папки, от новых к старым.
+     * Используется галереей, поиском по всей папке и очередью хранилища.
      */
-    fun listFiles(): List<File> {
-        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return emptyList()
-        return dir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
-    }
+    fun listFiles(): List<File> = storage.allFiles()
+
+    /** Содержимое одной папки: вложенные папки и файлы. */
+    fun entries(path: String?): List<StorageEntry> = storage.entries(path)
+
+    /** Все папки хранилища — для диалога «Переместить». */
+    fun folders(): List<String> = storage.folders()
+
+    fun createFolder(parentPath: String?, name: String): StorageEntry? =
+        storage.createFolder(parentPath, name)
+
+    fun rename(path: String, newName: String): StorageEntry? = storage.rename(path, newName)
+
+    fun move(path: String, targetDirPath: String?): StorageEntry? = storage.move(path, targetDirPath)
+
+    fun delete(path: String): Boolean = storage.delete(path)
+
+    /** Разрешённый файл или папка по относительному пути. */
+    fun resolve(path: String?): File? = storage.resolve(path)
 
     companion object {
         /**

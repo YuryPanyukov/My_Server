@@ -492,6 +492,113 @@ ${THEME_CSS}
     transition: color .18s, background .18s, border-color .18s;
   }
   .del:hover { color: var(--red); background: var(--err-soft); border-color: var(--err-line); }
+  .ren {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--faint);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color .18s, background .18s, border-color .18s;
+  }
+  .ren:hover { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
+  .file-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+  .crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 26px 0 0; font-size: 12px; }
+  .crumb { color: var(--muted); text-decoration: none; padding: 3px 6px; border-radius: 7px; }
+  .crumb:hover { color: var(--text); background: var(--panel-hover); }
+  .crumb.current { color: var(--text); font-weight: 600; }
+  .crumb-sep { color: var(--faint); }
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+  .view-switch { display: flex; margin-left: auto; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .view-switch button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; padding: 6px 10px; cursor: pointer; }
+  .view-switch button:hover { background: var(--panel-hover); color: var(--text); }
+  .view-switch button.on { background: var(--accent-soft); color: var(--accent); }
+  .sel-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 10px 0 0;
+    padding: 9px 11px;
+    border: 1px solid var(--accent-line);
+    border-radius: 12px;
+    background: var(--accent-soft);
+    font-size: 12px;
+  }
+  .sel-bar span { font-weight: 600; margin-right: auto; }
+  .sel-bar .danger { color: var(--red); border-color: var(--err-line); }
+  .sel-bar .danger:hover { background: var(--err-soft); border-color: var(--err-line); }
+  li.file-item { position: relative; }
+  li.file-item.selected { border-color: var(--accent-border); background: var(--accent-soft); }
+  .pick {
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    border: 1px solid var(--line-strong);
+    background: var(--glass-strong);
+    cursor: pointer;
+  }
+  .pick input { margin: 0; width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+  li.file-item.folder .file-thumb { border: 1px solid var(--accent-line); background: var(--accent-soft); }
+  .ftype[data-kind="folder"] { width: 100%; height: 100%; color: var(--accent); background: transparent; border-color: transparent; font-size: 10px; }
+  ul.files.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
+  ul.files.grid li.file-item { flex-direction: column; align-items: stretch; padding: 9px; }
+  ul.files.grid .pick { top: 14px; left: 14px; }
+  ul.files.grid .file-thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+  ul.files.grid .file-main { padding: 7px 2px 0; }
+  ul.files.grid a.file { font-size: 12.5px; }
+  ul.files.grid .meta { font-size: 10.5px; }
+  ul.files.grid .file-actions {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--glass-strong);
+  }
+  ul.files.grid .file-actions .ren, ul.files.grid .file-actions .del { width: 26px; height: 26px; font-size: 13px; }
+  .dlg {
+    width: min(380px, calc(100vw - 32px));
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: var(--shadow-strong);
+  }
+  .dlg::backdrop { background: rgba(0, 0, 0, .55); }
+  .dlg form { display: flex; flex-direction: column; gap: 10px; padding: 18px; }
+  .dlg h3 { margin: 0; font-size: 15px; }
+  .dlg p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
+  .dlg input, .dlg select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--field);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+  }
+  .dlg input:focus, .dlg select:focus { border-color: var(--accent-border); }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .ghost-btn.primary {
+    color: var(--on-accent);
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  }
   li.empty {
     display: flex;
     flex-direction: column;
@@ -538,6 +645,8 @@ ${THEME_CSS}
     .ftype, .u-thumb, .file-thumb { width: 38px; height: 38px; border-radius: 11px; }
     .meta { font-size: 11px; }
     .state { min-width: 52px; }
+    ul.files.grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+    .toolbar .ghost-btn { font-size: 11.5px; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -580,15 +689,57 @@ ${THEME_CSS}
     </div>
   </section>
 
+  <nav class="crumbs" aria-label="Текущая папка"><!--BREADCRUMBS--></nav>
+  <input id="current-path" type="hidden" value="<!--CURRENT_PATH-->">
+
   <div class="section-head">
-    <h2>Полученные файлы</h2>
+    <h2>Файлы и папки</h2>
     <span class="count"><!--FILE_COUNT--></span>
+  </div>
+  <div class="toolbar">
+    <button class="ghost-btn btn-small" id="new-folder" type="button">＋ Папка</button>
+    <a class="ghost-btn btn-small" id="zip-link" href="<!--ZIP_LINK-->">Скачать ZIP</a>
+    <div class="view-switch" role="group" aria-label="Вид списка">
+      <button id="view-grid" type="button" title="Показать сеткой">Сетка</button>
+      <button id="view-list" type="button" title="Показать списком">Список</button>
+    </div>
+  </div>
+  <div class="sel-bar" id="sel-bar" hidden>
+    <span id="sel-count">Выбрано 0</span>
+    <button class="ghost-btn btn-small" id="sel-all" type="button">Все</button>
+    <button class="ghost-btn btn-small" id="sel-move" type="button">Переместить</button>
+    <button class="ghost-btn btn-small danger" id="sel-delete" type="button">Удалить</button>
+    <button class="ghost-btn btn-small" id="sel-cancel" type="button">Отмена</button>
   </div>
   <div class="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input id="q" type="search" placeholder="Поиск по имени файла" autocomplete="off" aria-label="Поиск по имени файла">
+    <input id="q" type="search" placeholder="Поиск по имени файла или папки" autocomplete="off" aria-label="Поиск по имени файла или папки">
   </div>
   <ul class="files" id="files"><!--FILES--></ul>
+
+  <dialog class="dlg" id="mkdir-dialog">
+    <form id="mkdir-form">
+      <h3>Новая папка</h3>
+      <p>Она появится внутри текущей папки.</p>
+      <input id="mkdir-name" name="name" type="text" placeholder="Например, Отпуск" maxlength="120" required autocomplete="off">
+      <div class="dlg-actions">
+        <button class="ghost-btn" id="mkdir-cancel" type="button">Отмена</button>
+        <button class="ghost-btn primary" type="submit">Создать</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dlg" id="move-dialog">
+    <form id="move-form">
+      <h3>Переместить</h3>
+      <p>Выбранные файлы и папки переедут в выбранную папку.</p>
+      <select id="move-target" aria-label="Куда переместить"></select>
+      <div class="dlg-actions">
+        <button class="ghost-btn" id="move-cancel" type="button">Отмена</button>
+        <button class="ghost-btn primary" type="submit">Переместить</button>
+      </div>
+    </form>
+  </dialog>
 
   <p class="note"><b>Нет звука у видео?</b> Браузер не поддерживает его аудиокодек (например, DTS/AC3 в MKV) — скачайте файл и откройте в VLC.</p>
 </main>
@@ -601,6 +752,14 @@ ${THEME_SCRIPT}
   var queue = document.getElementById('queue');
   var summary = document.getElementById('queue-sum');
   var cancelAll = document.getElementById('cancel-all');
+  var currentInput = document.getElementById('current-path');
+  var current = currentInput ? currentInput.value : '';
+
+  // Подсказка сразу показывает, в какую папку попадут файлы.
+  if (current) {
+    var dropHint = document.querySelector('.drop-hint');
+    if (dropHint) dropHint.textContent = 'Файлы попадут в папку ' + current;
+  }
 
   // Три одновременные передачи: мелкие файлы перестают ждать друг друга,
   // а Wi-Fi не захлёбывается очередью запросов.
@@ -740,7 +899,8 @@ ${THEME_SCRIPT}
     var lastLoaded = 0;
     var speed = 0;
 
-    xhr.open('POST', '/upload?name=' + encodeURIComponent(item.file.name));
+    xhr.open('POST', '/upload?name=' + encodeURIComponent(item.file.name) +
+      '&path=' + encodeURIComponent(current));
     xhr.upload.onprogress = function (e) {
       if (!e.lengthComputable) return;
       // 100% показываем только после ответа сервера: файл может не сохраниться.
@@ -976,19 +1136,120 @@ ${THEME_SCRIPT}
   }
 
   var filesList = document.getElementById('files');
+  var selBar = document.getElementById('sel-bar');
+  var selCount = document.getElementById('sel-count');
+  var movingSelection = [];
+
+  function selectedPaths() {
+    if (!filesList) return [];
+    var boxes = filesList.querySelectorAll('input.sel');
+    var paths = [];
+    for (var i = 0; i < boxes.length; i++) {
+      if (boxes[i].checked) paths.push(boxes[i].getAttribute('data-path') || '');
+    }
+    return paths.filter(function (path) { return path !== ''; });
+  }
+
+  function updateSelection() {
+    if (!filesList || !selBar) return;
+    var paths = selectedPaths();
+    selBar.hidden = paths.length === 0;
+    if (selCount) selCount.textContent = 'Выбрано ' + paths.length;
+    var rows = filesList.querySelectorAll('li.file-item');
+    for (var i = 0; i < rows.length; i++) {
+      var box = rows[i].querySelector('input.sel');
+      rows[i].classList.toggle('selected', !!(box && box.checked));
+    }
+  }
+
+  function postDelete(paths) {
+    return fetch('/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: paths.join('\n')
+    })
+      .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+      .then(function (data) { return !!(data && data.ok); })
+      .catch(function () { return false; });
+  }
+
+  function applyView(view) {
+    if (!filesList) return;
+    filesList.classList.toggle('grid', view === 'grid');
+    var grid = document.getElementById('view-grid');
+    var list = document.getElementById('view-list');
+    if (grid) grid.classList.toggle('on', view === 'grid');
+    if (list) list.classList.toggle('on', view !== 'grid');
+  }
+
+  var savedView = 'grid';
+  try { savedView = localStorage.getItem('landrop-view') || 'grid'; } catch (e) {}
+  applyView(savedView);
+
+  function setView(view) {
+    applyView(view);
+    try { localStorage.setItem('landrop-view', view); } catch (e) {}
+  }
+
+  var gridBtn = document.getElementById('view-grid');
+  var listBtn = document.getElementById('view-list');
+  if (gridBtn) gridBtn.addEventListener('click', function () { setView('grid'); });
+  if (listBtn) listBtn.addEventListener('click', function () { setView('list'); });
+
   if (filesList) {
+    filesList.addEventListener('change', function (e) {
+      var target = e.target;
+      if (target && target.className === 'sel') updateSelection();
+    });
+
     filesList.addEventListener('click', function (e) {
       var button = e.target;
-      if (!button || button.className !== 'del') return;
+      if (!button) return;
+
+      if (button.className === 'ren') {
+        var path = button.getAttribute('data-path') || '';
+        var oldName = button.getAttribute('data-name') || '';
+        if (!path) return;
+        var nextName = prompt('Новое имя', oldName);
+        if (!nextName || nextName === oldName) return;
+        fetch('/rename?path=' + encodeURIComponent(path) + '&name=' + encodeURIComponent(nextName), { method: 'POST' })
+          .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+          .then(function (data) {
+            if (data && data.ok) location.reload();
+            else alert('Не удалось переименовать: имя занято или недопустимо');
+          })
+          .catch(function () { alert('Ошибка сети'); });
+        return;
+      }
+
+      if (button.className !== 'del') return;
+      var isDir = button.getAttribute('data-dir') === '1';
+      var deletePath = button.getAttribute('data-path') || button.getAttribute('data-file') || '';
+      if (!deletePath) return;
+      if (!confirm('Удалить ' + (isDir ? 'папку ' : 'файл ') + deletePath + '?')) return;
+
+      if (isDir) {
+        postDelete([deletePath]).then(function (ok) {
+          if (ok) {
+            var item = button.closest('li.file-item');
+            if (item) item.parentNode.removeChild(item);
+            updateSelection();
+          } else {
+            alert('Не удалось удалить папку');
+          }
+        });
+        return;
+      }
+
       var href = button.getAttribute('data-href');
-      var name = button.getAttribute('data-file') || '';
-      if (!href || !confirm('Удалить файл ' + name + '?')) return;
+      if (!href) return;
       fetch(href, { method: 'DELETE' })
         .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
         .then(function (data) {
           if (data && data.ok) {
-            var item = button.parentNode;
+            var item = button.closest('li.file-item');
             if (item) item.parentNode.removeChild(item);
+            updateSelection();
           } else {
             alert('Не удалось удалить файл');
           }
@@ -996,6 +1257,129 @@ ${THEME_SCRIPT}
         .catch(function () { alert('Ошибка сети'); });
     });
   }
+
+  var selAll = document.getElementById('sel-all');
+  if (selAll) {
+    selAll.addEventListener('click', function () {
+      var boxes = filesList ? filesList.querySelectorAll('input.sel') : [];
+      var allChecked = true;
+      for (var i = 0; i < boxes.length; i++) if (!boxes[i].checked) allChecked = false;
+      for (var j = 0; j < boxes.length; j++) boxes[j].checked = !allChecked;
+      updateSelection();
+    });
+  }
+
+  var selCancel = document.getElementById('sel-cancel');
+  if (selCancel) {
+    selCancel.addEventListener('click', function () {
+      var boxes = filesList ? filesList.querySelectorAll('input.sel') : [];
+      for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
+      updateSelection();
+    });
+  }
+
+  var selDelete = document.getElementById('sel-delete');
+  if (selDelete) {
+    selDelete.addEventListener('click', function () {
+      var paths = selectedPaths();
+      if (!paths.length) return;
+      if (!confirm('Удалить выбранное: ' + paths.length + '?')) return;
+      postDelete(paths).then(function (ok) {
+        if (ok) location.reload();
+        else alert('Не всё удалось удалить');
+      });
+    });
+  }
+
+  var moveDialog = document.getElementById('move-dialog');
+  var moveForm = document.getElementById('move-form');
+  var moveTarget = document.getElementById('move-target');
+  var selMove = document.getElementById('sel-move');
+
+  if (selMove && moveDialog && moveTarget) {
+    selMove.addEventListener('click', function () {
+      movingSelection = selectedPaths();
+      if (!movingSelection.length) return;
+      fetch('/api/folders')
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+          moveTarget.innerHTML = '';
+          var rootOption = document.createElement('option');
+          rootOption.value = '';
+          rootOption.textContent = 'Все файлы (корень)';
+          moveTarget.appendChild(rootOption);
+          var folders = (data && data.folders) || [];
+          for (var i = 0; i < folders.length; i++) {
+            var option = document.createElement('option');
+            option.value = folders[i];
+            option.textContent = folders[i];
+            moveTarget.appendChild(option);
+          }
+          moveDialog.showModal();
+        })
+        .catch(function () { alert('Не удалось получить список папок'); });
+    });
+  }
+
+  var moveCancel = document.getElementById('move-cancel');
+  if (moveCancel && moveDialog) {
+    moveCancel.addEventListener('click', function () { moveDialog.close(); });
+  }
+
+  if (moveForm && moveDialog && moveTarget) {
+    moveForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var target = moveTarget.value;
+      var paths = movingSelection.slice();
+      var failed = 0;
+      var chain = Promise.resolve();
+      paths.forEach(function (path) {
+        chain = chain.then(function () {
+          return fetch('/move?path=' + encodeURIComponent(path) + '&to=' + encodeURIComponent(target), { method: 'POST' })
+            .then(function (response) { if (!response.ok) failed++; })
+            .catch(function () { failed++; });
+        });
+      });
+      chain.then(function () {
+        moveDialog.close();
+        if (failed > 0) alert('Не удалось переместить: ' + failed);
+        location.reload();
+      });
+    });
+  }
+
+  var newFolder = document.getElementById('new-folder');
+  var mkdirDialog = document.getElementById('mkdir-dialog');
+  var mkdirForm = document.getElementById('mkdir-form');
+  var mkdirName = document.getElementById('mkdir-name');
+  var mkdirCancel = document.getElementById('mkdir-cancel');
+
+  if (newFolder && mkdirDialog && mkdirName) {
+    newFolder.addEventListener('click', function () {
+      mkdirName.value = '';
+      mkdirDialog.showModal();
+      setTimeout(function () { mkdirName.focus(); }, 30);
+    });
+  }
+  if (mkdirCancel && mkdirDialog) {
+    mkdirCancel.addEventListener('click', function () { mkdirDialog.close(); });
+  }
+  if (mkdirForm && mkdirDialog && mkdirName) {
+    mkdirForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var name = mkdirName.value.trim();
+      if (!name) return;
+      fetch('/folder?path=' + encodeURIComponent(current) + '&name=' + encodeURIComponent(name), { method: 'POST' })
+        .then(function (response) { return response.json().catch(function () { return { ok: false }; }); })
+        .then(function (data) {
+          if (data && data.ok) location.reload();
+          else alert('Не удалось создать папку');
+        })
+        .catch(function () { alert('Ошибка сети'); });
+    });
+  }
+
+  updateSelection();
 
   var search = document.getElementById('q');
   if (search) {

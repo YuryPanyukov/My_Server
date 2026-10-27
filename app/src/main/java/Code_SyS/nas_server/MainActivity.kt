@@ -6,22 +6,32 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -32,6 +42,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -43,7 +55,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import Code_SyS.nas_server.ui.theme.LanDropTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
@@ -77,6 +92,11 @@ class MainActivity : ComponentActivity() {
                     Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
                 ) == PackageManager.PERMISSION_GRANTED
         }
+
+        /** Есть ли доступ к камере: без него кнопка сканера ведёт в пустой экран. */
+        fun hasCameraAccess(context: Context): Boolean =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
     }
 
     private var notificationPermissionLauncher = registerForActivityResult(
@@ -90,6 +110,15 @@ class MainActivity : ComponentActivity() {
     /** Показывает системный запрос доступа к фото и видео. */
     fun requestMediaPermissions() {
         mediaPermissionLauncher.launch(requiredMediaPermissions())
+    }
+
+    private var cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* статус перечитывается в опросе FileReceiverScreen */ }
+
+    /** Системный запрос камеры из карточки на главном экране. */
+    fun requestCameraPermission() {
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
     /** Файлы из системного «Поделиться», ещё не обработанные экраном. */
@@ -172,10 +201,22 @@ fun FileReceiverScreen(
     var httpUrlText by remember { mutableStateOf("Браузер: —") }
     var galleryUrlText by remember { mutableStateOf("Галерея: —") }
     var mediaAccess by remember { mutableStateOf(MainActivity.hasMediaAccess(context)) }
+    var cameraAccess by remember { mutableStateOf(MainActivity.hasCameraAccess(context)) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
+    var entries by remember { mutableStateOf<List<StorageEntry>>(emptyList()) }
+    /** Текущая папка внутри хранилища: пустая строка — корень. */
+    var currentPath by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
-    var fileToDelete by remember { mutableStateOf<File?>(null) }
-    var fileToArchive by remember { mutableStateOf<File?>(null) }
+    var filesToDelete by remember { mutableStateOf<List<StorageEntry>>(emptyList()) }
+    var filesToArchive by remember { mutableStateOf<List<File>>(emptyList()) }
+    var showCreateFolder by remember { mutableStateOf(false) }
+    var moveFolders by remember { mutableStateOf<List<String>?>(null) }
+    var entryToRename by remember { mutableStateOf<StorageEntry?>(null) }
+    val scope = rememberCoroutineScope()
+
+    /** Режим выделения: включается долгим нажатием по плитке файла. */
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showSelection by remember { mutableStateOf(false) }
     var recentHosts by remember { mutableStateOf(RecentHosts.list(context)) }
     var galleryCopy by remember { mutableStateOf(GallerySaver.isEnabled(context)) }
@@ -231,7 +272,12 @@ fun FileReceiverScreen(
                 httpUrlText = if (ip != null) "Браузер: http://$ip:${Protocol.PORT}" else "Браузер: —"
                 galleryUrlText = if (ip != null) "Галерея: http://$ip:${Protocol.PORT}/gallery" else "Галерея: —"
                 mediaAccess = MainActivity.hasMediaAccess(context)
-                files = fileSaver.listFiles()
+                cameraAccess = MainActivity.hasCameraAccess(context)
+                val snapshot = withContext(Dispatchers.IO) {
+                    fileSaver.listFiles() to fileSaver.entries(currentPath)
+                }
+                files = snapshot.first
+                entries = snapshot.second
                 // Хранилище: возобновить очередь, показать число недоставленных
                 // и разово просканировать автоархивацию (внутри троттлинг ~15 мин).
                 ArchiveManager.resume(context)
@@ -246,32 +292,93 @@ fun FileReceiverScreen(
         }
     }
 
-    val filteredFiles = remember(files, query) {
+    val filteredEntries = remember(entries, query) {
         val needle = query.trim()
-        if (needle.isEmpty()) files else files.filter { it.name.contains(needle, ignoreCase = true) }
+        if (needle.isEmpty()) entries else entries.filter { it.name.contains(needle, ignoreCase = true) }
     }
 
-    fileToDelete?.let { file ->
+    // Выбор храним относительными путями: список обновляется каждую секунду,
+    // а выделение не должно от него зависеть.
+    val selectedEntries = remember(entries, selectedPaths) {
+        entries.filter { it.path in selectedPaths }
+    }
+    // В хранилище выгружаются только файлы: папки в эту очередь не берём.
+    val selectedFiles = remember(selectedEntries) {
+        selectedEntries.filterNot { it.isDirectory }.mapNotNull { fileSaver.resolve(it.path) }
+    }
+    val allVisibleSelected = filteredEntries.isNotEmpty() &&
+        filteredEntries.all { it.path in selectedPaths }
+
+    fun clearSelection() {
+        selectionMode = false
+        selectedPaths = emptySet()
+    }
+
+    fun navigateTo(path: String) {
+        currentPath = path
+        query = ""
+        clearSelection()
+        scope.launch {
+            entries = withContext(Dispatchers.IO) { fileSaver.entries(path) }
+        }
+    }
+
+    // В режиме выделения «назад» выходит из него, а не закрывает приложение.
+    BackHandler(enabled = selectionMode) { clearSelection() }
+    // Внутри папки «назад» поднимается на уровень выше.
+    BackHandler(enabled = !selectionMode && currentPath.isNotEmpty()) {
+        navigateTo(currentPath.substringBeforeLast('/', ""))
+    }
+
+    if (filesToDelete.isNotEmpty()) {
+        val targets = filesToDelete
+        val hasFolder = targets.any { it.isDirectory }
         AlertDialog(
-            onDismissRequest = { fileToDelete = null },
-            title = { Text("Удалить файл?") },
-            text = { Text(file.name) },
+            onDismissRequest = { filesToDelete = emptyList() },
+            title = {
+                Text(
+                    when {
+                        targets.size == 1 && targets.first().isDirectory -> "Удалить папку?"
+                        targets.size == 1 -> "Удалить файл?"
+                        else -> "Удалить ${targets.size} элементов?"
+                    }
+                )
+            },
+            text = {
+                Text(
+                    when {
+                        targets.size == 1 -> targets.first().name
+                        hasFolder -> "Выбранные файлы и папки будут удалены с телефона. Содержимое папок тоже удалится."
+                        else -> "Выбранные файлы будут удалены с телефона."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    val deleted = try {
-                        file.delete()
-                    } catch (_: Exception) {
-                        false
-                    }
-                    fileToDelete = null
-                    files = fileSaver.listFiles()
-                    if (!deleted) {
-                        Toast.makeText(context, "Не удалось удалить файл", Toast.LENGTH_SHORT).show()
+                    filesToDelete = emptyList()
+                    scope.launch {
+                        var failed = 0
+                        withContext(Dispatchers.IO) {
+                            for (target in targets) {
+                                if (!fileSaver.delete(target.path)) failed++
+                            }
+                        }
+                        files = withContext(Dispatchers.IO) { fileSaver.listFiles() }
+                        entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
+                        clearSelection()
+                        if (failed > 0) {
+                            val message = if (failed == 1) {
+                                "Не удалось удалить элемент"
+                            } else {
+                                "Не удалось удалить элементов: $failed"
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }) { Text("Удалить") }
             },
             dismissButton = {
-                TextButton(onClick = { fileToDelete = null }) { Text("Отмена") }
+                TextButton(onClick = { filesToDelete = emptyList() }) { Text("Отмена") }
             }
         )
     }
@@ -292,16 +399,20 @@ fun FileReceiverScreen(
         else -> statusText.removePrefix("Статус: ")
     }
 
-    // Один список на весь экран: карточки и файлы прокручиваются вместе,
+    // Один список на весь экран: карточки и плитки файлов прокручиваются вместе,
     // иначе на невысоких экранах списку файлов почти не остаётся места.
-    LazyColumn(
+    // Карточки занимают всю ширину строки, а файлы идут по два в ряд.
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
         BrandHeader()
         Spacer(modifier = Modifier.height(20.dp))
 
@@ -382,6 +493,8 @@ fun FileReceiverScreen(
         Spacer(modifier = Modifier.height(12.dp))
         ConnectCard(
             hosts = recentHosts,
+            cameraGranted = cameraAccess,
+            onGrantCamera = { (context as? MainActivity)?.requestCameraPermission() },
             onScan = {
                 try {
                     context.startActivity(Intent(context, ScanActivity::class.java))
@@ -414,25 +527,63 @@ fun FileReceiverScreen(
         }
 
         Spacer(modifier = Modifier.height(18.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Принятые файлы",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
+        if (selectionMode) {
+            SelectionHeader(
+                count = selectedEntries.size,
+                allSelected = allVisibleSelected,
+                canArchive = selectedFiles.isNotEmpty() && ArchiveManager.isConfigured(context),
+                onSelectAll = {
+                    selectedPaths = if (allVisibleSelected) {
+                        emptySet()
+                    } else {
+                        filteredEntries.map { it.path }.toSet()
+                    }
+                },
+                canRename = selectedEntries.size == 1,
+                onDelete = { filesToDelete = selectedEntries },
+                onRename = { entryToRename = selectedEntries.firstOrNull() },
+                onMove = {
+                    moveFolders = fileSaver.folders()
+                },
+                onArchive = { filesToArchive = selectedFiles },
+                onCancel = { clearSelection() },
             )
-            Spacer(modifier = Modifier.weight(1f))
-            CountChip(
-                text = if (query.isBlank()) files.size.toString() else "${filteredFiles.size}/${files.size}"
-            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (currentPath.isEmpty()) "Принятые файлы" else currentPath.substringAfterLast('/'),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                TextButton(
+                    onClick = { showCreateFolder = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    Text("＋ Папка", fontSize = 12.sp)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                CountChip(
+                    text = if (query.isBlank()) entries.size.toString() else "${filteredEntries.size}/${entries.size}"
+                )
+            }
+            if (currentPath.isNotEmpty()) {
+                PathCrumbs(
+                    path = currentPath,
+                    onNavigate = { path -> navigateTo(path) },
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
         }
-        Spacer(modifier = Modifier.height(10.dp))
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Поиск по файлам", fontSize = 14.sp) },
+            placeholder = { Text("Поиск по файлам и папкам", fontSize = 14.sp) },
             singleLine = true,
             shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -446,26 +597,119 @@ fun FileReceiverScreen(
         Spacer(modifier = Modifier.height(6.dp))
         }
 
-        if (filteredFiles.isEmpty()) {
-            item {
+        if (filteredEntries.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 EmptyFiles(
-                    title = if (files.isEmpty()) "Пока нет принятых файлов" else "Ничего не найдено",
-                    hint = if (files.isEmpty()) {
-                        "Перетащите файл в браузере — он появится здесь"
-                    } else {
-                        "Измените запрос в поиске"
+                    title = when {
+                        entries.isEmpty() && currentPath.isEmpty() -> "Пока нет принятых файлов"
+                        entries.isEmpty() -> "Папка пуста"
+                        else -> "Ничего не найдено"
+                    },
+                    hint = when {
+                        entries.isEmpty() && currentPath.isEmpty() ->
+                            "Перетащите файл в браузере — он появится здесь"
+                        entries.isEmpty() -> "Загрузите файл в браузере — он попадёт в эту папку"
+                        else -> "Измените запрос в поиске"
                     }
                 )
             }
         }
-        items(filteredFiles, key = { it.absolutePath }) { file ->
-            ReceivedFileRow(
-                file = file,
-                onOpen = { openFile(context, file) },
-                onDelete = { fileToDelete = file },
-                onArchive = { fileToArchive = file },
+        gridItems(filteredEntries, key = { it.path }) { entry ->
+            ReceivedFileTile(
+                entry = entry,
+                file = if (entry.isDirectory) null else fileSaver.resolve(entry.path),
+                selected = entry.path in selectedPaths,
+                selectionMode = selectionMode,
+                onOpenFile = { file -> openFile(context, file) },
+                onOpenFolder = { navigateTo(entry.path) },
+                onSelect = {
+                    selectionMode = true
+                    selectedPaths = selectedPaths + entry.path
+                },
+                onToggle = {
+                    selectedPaths = if (entry.path in selectedPaths) {
+                        selectedPaths - entry.path
+                    } else {
+                        selectedPaths + entry.path
+                    }
+                },
             )
         }
+    }
+
+    if (showCreateFolder) {
+        CreateFolderDialog(
+            onDismiss = { showCreateFolder = false },
+            onCreate = { name ->
+                showCreateFolder = false
+                scope.launch {
+                    val created = withContext(Dispatchers.IO) {
+                        fileSaver.createFolder(currentPath, name)
+                    }
+                    entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
+                    if (created == null) {
+                        Toast.makeText(context, "Не удалось создать папку", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+        )
+    }
+
+    moveFolders?.let { folders ->
+        val moveTargets = selectedEntries
+        MoveEntriesDialog(
+            folders = folders,
+            count = moveTargets.size,
+            onDismiss = { moveFolders = null },
+            onMove = { target ->
+                moveFolders = null
+                scope.launch {
+                    var failed = 0
+                    withContext(Dispatchers.IO) {
+                        for (entry in moveTargets) {
+                            if (fileSaver.move(entry.path, target) == null) failed++
+                        }
+                    }
+                    entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
+                    files = withContext(Dispatchers.IO) { fileSaver.listFiles() }
+                    clearSelection()
+                    if (failed > 0) {
+                        Toast.makeText(
+                            context,
+                            if (failed == 1) "Не удалось переместить элемент"
+                            else "Не удалось переместить: $failed",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+        )
+    }
+
+    entryToRename?.let { entry ->
+        RenameEntryDialog(
+            currentName = entry.name,
+            isDirectory = entry.isDirectory,
+            onDismiss = { entryToRename = null },
+            onRename = { newName ->
+                entryToRename = null
+                scope.launch {
+                    val renamed = withContext(Dispatchers.IO) {
+                        fileSaver.rename(entry.path, newName)
+                    }
+                    entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
+                    files = withContext(Dispatchers.IO) { fileSaver.listFiles() }
+                    clearSelection()
+                    if (renamed == null) {
+                        Toast.makeText(
+                            context,
+                            "Не удалось переименовать: имя занято или недопустимо",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+        )
     }
 
     if (showSelection) {
@@ -482,28 +726,35 @@ fun FileReceiverScreen(
         )
     }
 
-    fileToArchive?.let { file ->
+    if (filesToArchive.isNotEmpty()) {
+        val targets = filesToArchive
         ArchiveDialog(
-            file = file,
+            files = targets,
             storageReady = ArchiveManager.isConfigured(context),
             onUploadAndDelete = {
-                fileToArchive = null
-                ArchiveManager.queueFile(context, file, deleteAfter = true)
+                filesToArchive = emptyList()
+                for (target in targets) {
+                    ArchiveManager.queueFile(context, target, deleteAfter = true)
+                }
+                clearSelection()
                 Toast.makeText(context, "В очереди на хранилище", Toast.LENGTH_SHORT).show()
             },
             onUploadKeep = {
-                fileToArchive = null
-                ArchiveManager.queueFile(context, file, deleteAfter = false)
+                filesToArchive = emptyList()
+                for (target in targets) {
+                    ArchiveManager.queueFile(context, target, deleteAfter = false)
+                }
+                clearSelection()
                 Toast.makeText(context, "В очереди на хранилище", Toast.LENGTH_SHORT).show()
             },
             onConfigure = {
-                fileToArchive = null
+                filesToArchive = emptyList()
                 try {
                     context.startActivity(Intent(context, VaultActivity::class.java))
                 } catch (_: Exception) {
                 }
             },
-            onDismiss = { fileToArchive = null },
+            onDismiss = { filesToArchive = emptyList() },
         )
     }
 }
@@ -695,6 +946,8 @@ private fun AddressCard(
 @Composable
 private fun ConnectCard(
     hosts: List<ShareTarget>,
+    cameraGranted: Boolean,
+    onGrantCamera: () -> Unit,
     onScan: () -> Unit,
     onOpenHost: (ShareTarget) -> Unit,
 ) {
@@ -730,6 +983,31 @@ private fun ConnectCard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Сканировать QR", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            // Камера нужна только сканеру, поэтому про отказ сообщаем здесь же —
+            // иначе пользователь узнаёт о нём уже внутри сканера.
+            if (!cameraGranted) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceVariant)
+                        .border(1.dp, scheme.outline.copy(alpha = .6f), RoundedCornerShape(12.dp))
+                        .padding(start = 12.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Нет доступа к камере: QR не отсканировать",
+                        fontSize = 11.5.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onGrantCamera) {
+                        Text("Разрешить", fontSize = 12.sp)
+                    }
+                }
             }
 
             hosts.take(3).forEach { host ->
@@ -869,64 +1147,394 @@ private fun EmptyFiles(title: String, hint: String) {
     }
 }
 
+/**
+ * Панель над плитками в режиме выделения: сколько выбрано, «Все»/«Снять»,
+ * массовые действия и выход из режима.
+ */
 @Composable
-private fun ReceivedFileRow(
-    file: File,
-    onOpen: () -> Unit,
+private fun SelectionHeader(
+    count: Int,
+    allSelected: Boolean,
+    canArchive: Boolean,
+    canRename: Boolean,
+    onSelectAll: () -> Unit,
     onDelete: () -> Unit,
+    onRename: () -> Unit,
+    onMove: () -> Unit,
     onArchive: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val kind = kindOf(file)
-    Row(
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Выбрано $count",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            // Переименовать можно ровно один элемент — иначе непонятно, что менять.
+            if (canRename) {
+                TextButton(
+                    onClick = onRename,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    Text("Переименовать", fontSize = 12.sp)
+                }
+            }
+            TextButton(onClick = onSelectAll) {
+                Text(if (allSelected) "Снять" else "Все", fontSize = 12.sp)
+            }
+            TextButton(onClick = onCancel) {
+                Text("Отмена", fontSize = 12.sp)
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = onDelete,
+                enabled = count > 0,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = scheme.error,
+                    contentColor = scheme.onError,
+                ),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Удалить", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = onMove,
+                enabled = count > 0,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Переместить", fontSize = 12.sp)
+            }
+            if (canArchive) {
+                OutlinedButton(
+                    onClick = onArchive,
+                    enabled = count > 0,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Хранилище", fontSize = 12.sp)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+    }
+}
+
+/**
+ * Плитка принятого файла: превью или бейдж типа, имя и отметка выделения.
+ * Долгое нажатие включает режим выделения, тап в нём — помечает и снимает.
+ */
+@Composable
+private fun ReceivedFileTile(
+    entry: StorageEntry,
+    file: File?,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onOpenFile: (File) -> Unit,
+    onOpenFolder: () -> Unit,
+    onSelect: () -> Unit,
+    onToggle: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val kind = if (entry.isDirectory) FileKind.FOLDER else file?.let { kindOf(it) } ?: FileKind.OTHER
+    val shape = RoundedCornerShape(14.dp)
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onOpen)
-            .padding(vertical = 8.dp, horizontal = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(shape)
+            .combinedClickable(
+                onClick = {
+                    when {
+                        selectionMode -> onToggle()
+                        entry.isDirectory -> onOpenFolder()
+                        file != null -> onOpenFile(file)
+                    }
+                },
+                onLongClick = { if (selected) onToggle() else onSelect() },
+            ),
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(kind.color.copy(alpha = .14f))
-                .border(1.dp, kind.color.copy(alpha = .28f), RoundedCornerShape(12.dp)),
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(shape)
+                .background(kind.color.copy(alpha = .12f))
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) scheme.primary else kind.color.copy(alpha = .28f),
+                    shape = shape,
+                ),
             contentAlignment = Alignment.Center,
         ) {
+            if (file != null) {
+                FileThumb(file = file, kind = kind, modifier = Modifier.fillMaxSize())
+            } else {
+                Text(
+                    text = kind.label,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.4.sp,
+                    color = kind.color,
+                )
+            }
+            if (selectionMode || selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) scheme.primary else Color(0x66000000))
+                        .border(1.dp, Color.White.copy(alpha = .7f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) {
+                        Text("✓", fontSize = 12.sp, color = scheme.onPrimary)
+                    }
+                }
+            }
+        }
+        Text(
+            text = entry.name,
+            fontSize = 11.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
+        )
+        Text(
+            text = if (entry.isDirectory) "Папка" else FileFormat.size(entry.size),
+            fontSize = 10.5.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 4.dp),
+        )
+    }
+}
+
+/** Путь до текущей папки: «Все файлы / Фото / 2026», каждый сегмент кликабелен. */
+@Composable
+private fun PathCrumbs(path: String, onNavigate: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Все файлы",
+            fontSize = 11.sp,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { onNavigate("") }
+                .padding(horizontal = 4.dp, vertical = 3.dp),
+        )
+        var accumulated = ""
+        val segments = path.split('/')
+        segments.forEachIndexed { index, segment ->
+            accumulated = if (accumulated.isEmpty()) segment else "$accumulated/$segment"
+            Text("/", fontSize = 11.sp, color = scheme.outline)
+            val target = accumulated
+            Text(
+                text = segment,
+                fontSize = 11.sp,
+                fontWeight = if (index == segments.lastIndex) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (index == segments.lastIndex) scheme.onSurface else scheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onNavigate(target) }
+                    .padding(horizontal = 4.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
+/** Диалог создания папки: имя проверяет [ReceivedStorage], занятые имена нумеруются. */
+@Composable
+private fun CreateFolderDialog(onCreate: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Новая папка") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = { Text("Например, Отпуск", fontSize = 14.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCreate(name.trim()) },
+                enabled = name.isNotBlank(),
+            ) { Text("Создать") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
+}
+
+/**
+ * Диалог переименования одного файла или папки: имя проверяет [ReceivedStorage],
+ * занятое имя не затирается — сервер вернёт ошибку, и она покажется тостом.
+ */
+@Composable
+private fun RenameEntryDialog(
+    currentName: String,
+    isDirectory: Boolean,
+    onRename: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember(currentName) { mutableStateOf(currentName) }
+    val trimmed = name.trim()
+    val unchanged = trimmed == currentName
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isDirectory) "Переименовать папку" else "Переименовать файл") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Имя", fontSize = 12.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(trimmed) },
+                enabled = trimmed.isNotEmpty() && !unchanged,
+            ) { Text("Сохранить") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
+}
+
+/** Диалог перемещения выбранных файлов и папок в другую папку хранилища. */
+@Composable
+private fun MoveEntriesDialog(
+    folders: List<String>,
+    count: Int,
+    onMove: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var target by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Переместить") },
+        text = {
+            Column {
+                Text(
+                    text = if (count == 1) "1 элемент" else "Элементов: $count",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    item {
+                        MoveTargetRow(
+                            label = "Все файлы (корень)",
+                            selected = target.isEmpty(),
+                            onClick = { target = "" },
+                        )
+                    }
+                    items(folders, key = { it }) { folder ->
+                        MoveTargetRow(
+                            label = folder,
+                            selected = target == folder,
+                            onClick = { target = folder },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onMove(target) }, enabled = count > 0) {
+                Text("Переместить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
+}
+
+@Composable
+private fun MoveTargetRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * Превью принятого файла: фото и видео — уменьшенным кадром, остальные типы —
+ * бейджем. Кадр готовится в фоне, чтобы прокрутка сетки не дёргалась.
+ */
+@Composable
+private fun FileThumb(file: File, kind: FileKind, modifier: Modifier) {
+    val bitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null,
+        file.absolutePath,
+        file.lastModified(),
+    ) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                Thumbnails.fromFile(file, MimeTypes.forFileName(file.name))
+                    ?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+            }.getOrNull()
+        }
+    }
+
+    val image = bitmap
+    if (image != null) {
+        Image(
+            bitmap = image.asImageBitmap(),
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop,
+        )
+    } else {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text(
                 text = kind.label,
-                fontSize = 9.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.4.sp,
                 color = kind.color,
             )
         }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(
-            modifier = Modifier
-                .weight(1f)
-        ) {
-            Text(
-                text = file.name,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = "${FileFormat.size(file.length())} · ${FileFormat.date(file.lastModified())}",
-                fontSize = 11.5.sp,
-                color = scheme.onSurfaceVariant
-            )
-        }
-        TextButton(onClick = onArchive) {
-            Text("В хранилище", fontSize = 11.5.sp)
-        }
-        TextButton(onClick = onDelete) {
-            Text("Удалить", fontSize = 11.5.sp, color = scheme.onSurfaceVariant)
-        }
     }
-    HorizontalDivider(color = scheme.outlineVariant)
 }
 
 @Composable
@@ -1125,12 +1733,12 @@ private fun SelectionDialog(
 }
 
 /**
- * Диалог отправки файла в хранилище. Решение «оставить или удалить» —
+ * Диалог отправки файлов в хранилище. Решение «оставить или удалить» —
  * каждый раз спрашивает пользователя.
  */
 @Composable
 private fun ArchiveDialog(
-    file: File,
+    files: List<File>,
     storageReady: Boolean,
     onUploadAndDelete: () -> Unit,
     onUploadKeep: () -> Unit,
@@ -1143,13 +1751,17 @@ private fun ArchiveDialog(
         text = {
             Column {
                 Text(
-                    text = file.name,
+                    text = if (files.size == 1) files.first().name else "Файлов: ${files.size}",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = if (storageReady) {
-                        "Файл выгрузится на ваш WebDAV-сервер."
+                        if (files.size == 1) {
+                            "Файл выгрузится на ваш WebDAV-сервер."
+                        } else {
+                            "Файлы выгрузятся на ваш WebDAV-сервер."
+                        }
                     } else {
                         "Хранилище ещё не настроено: нужен адрес WebDAV-папки."
                     },
@@ -1199,6 +1811,7 @@ private fun pickDate(context: android.content.Context, onPicked: (Long) -> Unit)
 }
 
 private enum class FileKind(val label: String, val color: Color) {
+    FOLDER("DIR", Color(0xFF7B9CFF)),
     IMAGE("IMG", Color(0xFFF5A623)),
     VIDEO("VID", Color(0xFFB98CFF)),
     AUDIO("AUD", Color(0xFF38D6C4)),

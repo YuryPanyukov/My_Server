@@ -88,6 +88,7 @@ class FileReceiverService : Service() {
         val receivedSource = ReceivedMediaSource(
             files = { fileSaver.listFiles() },
             thumbnailer = { file -> Thumbnails.fromFile(file, MimeTypes.forFileName(file.name)) },
+            root = { fileSaver.storageDir },
         )
         val deviceSource = DeviceMediaSource(this)
 
@@ -114,6 +115,14 @@ class FileReceiverService : Service() {
                     AccessModeState.current,
                     System.currentTimeMillis(),
                 )
+            },
+            storageRoot = { fileSaver.storageDir },
+            folderSaver = { fileName, fileSize, dir, input ->
+                val saved = FileSaver.writeTo(dir, fileName, fileSize, input)
+                if (saved != null && GallerySaver.isEnabled(this)) {
+                    galleryExecutor.execute { GallerySaver.publish(this, saved) }
+                }
+                saved
             },
             mediaSources = {
                 AccessModeFilter.applySources(

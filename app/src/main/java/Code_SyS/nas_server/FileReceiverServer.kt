@@ -35,6 +35,8 @@ import java.util.concurrent.TimeUnit
  * @param logger приёмник диагностических сообщений
  * @param saver запись файла; возвращает `File` при успехе и `null` при ошибке/обрыве
  * @param fileLister файлы, доступные для просмотра через HTTP-страницу
+ * @param storageRoot корень папки приёма; `null` — просмотр только [fileLister] без папок
+ * @param folderSaver запись файла в выбранную папку хранилища
  * @param mediaSources источники галереи: принятые файлы и медиатека телефона
  * @param fileThumbnailer превью принятого файла для списка на главной странице
  */
@@ -45,6 +47,8 @@ class FileReceiverServer(
     private val logger: (String) -> Unit = {},
     private val saver: (fileName: String, fileSize: Long, input: InputStream) -> File?,
     private val fileLister: () -> List<File> = { emptyList() },
+    private val storageRoot: () -> File? = { null },
+    private val folderSaver: ((fileName: String, fileSize: Long, dir: File, input: InputStream) -> File?)? = null,
     private val mediaSources: () -> List<MediaSource> = { emptyList() },
     private val fileThumbnailer: (File) -> ByteArray? = { null },
 ) : Closeable {
@@ -61,6 +65,8 @@ class FileReceiverServer(
     private val httpHandler = HttpRequestHandler(
         saver = saver,
         files = fileLister,
+        storageRoot = storageRoot,
+        folderSaver = folderSaver,
         mediaSources = mediaSources,
         fileThumbnailer = fileThumbnailer,
         logger = logger,

@@ -10,8 +10,17 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-/** Файл, принятый телефоном-хостом. */
-data class RemoteFile(val name: String, val size: Long, val modified: Long)
+/**
+ * Файл или папка на телефоне-хосте. [path] — путь от корня хранилища,
+ * поэтому одинаковые имена в разных папках не путаются.
+ */
+data class RemoteFile(
+    val name: String,
+    val size: Long,
+    val modified: Long,
+    val path: String = name,
+    val isDirectory: Boolean = false,
+)
 
 /** Элемент галереи на телефоне-хосте. */
 data class RemoteMediaItem(
@@ -44,12 +53,14 @@ class RemoteClient(val host: String, val port: Int) {
     /** Ссылка на веб-версию — открывается во внешнем браузере. */
     fun browserUrl(path: String = "/"): String = baseUrl + path
 
-    fun filePath(name: String): String = "/files/" + encodeSegment(name)
+    fun filePath(path: String): String = "/files/" + encodePath(path)
 
-    fun fileThumbPath(name: String): String = "/thumb-file?name=" + encodeSegment(name)
+    fun fileThumbPath(path: String): String = "/thumb-file?name=" + encodePath(path)
 
-    fun files(): List<RemoteFile> {
-        val json = getJson("/api/files")
+    /** Содержимое папки [path]; пустая строка — корень. */
+    fun files(path: String = ""): List<RemoteFile> {
+        val query = if (path.isEmpty()) "" else "?path=" + encodePath(path)
+        val json = getJson("/api/files" + query)
         val array = json.optJSONArray("files") ?: return emptyList()
         return buildList {
             for (index in 0 until array.length()) {
@@ -61,10 +72,39 @@ class RemoteClient(val host: String, val port: Int) {
                         name = name,
                         size = item.optLong("size"),
                         modified = item.optLong("modified"),
+                        path = item.optString("path", name),
+                        isDirectory = item.optBoolean("dir", false),
                     )
                 )
             }
         }
+    }
+
+    /** Все папки хранилища на хосте — для диалога перемещения. */
+    fun folders(): List<String> {
+        val json = getJson("/api/folders")
+        val array = json.optJSONArray("folders") ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val folder = array.optString(index)
+                if (folder.isNotEmpty()) add(folder)
+            }
+        }
+    }
+
+    /** Создаёт папку на хосте; занятое имя сервер нумерует сам. */
+    fun createFolder(parentPath: String, name: String) {
+        post("/folder?path=" + encodePath(parentPath) + "&name=" + encodeSegment(name))
+    }
+
+    /** Переименовывает файл или папку на хосте. */
+    fun rename(path: String, newName: String) {
+        post("/rename?path=" + encodePath(path) + "&name=" + encodeSegment(newName))
+    }
+
+    /** Перемещает файл или папку на хосте. */
+    fun move(path: String, targetDir: String) {
+        post("/move?path=" + encodePath(path) + "&to=" + encodePath(targetDir))
     }
 
     fun galleries(): List<RemoteGallery> {
@@ -99,9 +139,10 @@ class RemoteClient(val host: String, val port: Int) {
         }
     }
 
-    /** Удаляет принятый файл на хосте. */
-    fun deleteFile(name: String) {
-        request("/files/" + encodeSegment(name), "DELETE").withConnection { connection ->
+    /** Удаляет принятый файл или папку на хосте (папка — со всем содержимым). */
+    fun deleteFile(path: String, recursive: Boolean = false) {
+        val target = "/files/" + encodePath(path) + if (recursive) "?recursive=1" else ""
+        request(target, "DELETE").withConnection { connection ->
             val code = connection.responseCode
             if (code !in 200..299) throw IOException("Сервер ответил $code")
         }
@@ -116,9 +157,11 @@ class RemoteClient(val host: String, val port: Int) {
         size: Long,
         openStream: () -> InputStream?,
         onProgress: (sent: Long) -> Unit = {},
+        path: String = "",
     ) {
         require(size >= 0) { "Неизвестный размер файла" }
-        val connection = openConnection("/upload?name=" + encodeSegment(name), "PUT")
+        val target = "/upload?name=" + encodeSegment(name) + "&path=" + encodePath(path)
+        val connection = openConnection(target, "PUT")
         try {
             connection.setRequestProperty("Content-Type", "application/octet-stream")
             connection.setFixedLengthStreamingMode(size)
@@ -202,6 +245,21 @@ class RemoteClient(val host: String, val port: Int) {
         return JSONObject(text)
     }
 
+    /** POST без тела: сервер не ждёт данных, но Content-Length должен быть явным. */
+    private fun post(path: String) {
+        val connection = openConnection(path, "POST")
+        connection.setFixedLengthStreamingMode(0)
+        connection.doOutput = true
+        try {
+            connection.outputStream.use { }
+            val code = connection.responseCode
+            if (code !in 200..299) throw IOException("Сервер ответил $code")
+            connection.inputStream.close()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun request(path: String, method: String): HttpURLConnection =
         openConnection(path, method).apply {
             try {
@@ -230,6 +288,10 @@ class RemoteClient(val host: String, val port: Int) {
         connection.setRequestProperty("Accept", "*/*")
         return connection
     }
+
+    /** Кодирует каждый сегмент пути, оставляя `/` разделителем. */
+    private fun encodePath(path: String): String =
+        path.split('/').joinToString("/") { encodeSegment(it) }
 
     /** Как `encodeURIComponent`, но пробел — `%20`, а не `+` (сервер читает `+` буквально). */
     private fun encodeSegment(value: String): String {

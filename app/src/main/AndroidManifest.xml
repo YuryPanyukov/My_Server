@@ -22,6 +22,10 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- Сохранение в «Загрузки» на Android 9 и ниже: на 10+ пишем через MediaStore -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <!-- Сервер в локальной сети работает по HTTP, поэтому cleartext нужен и
          для встроенного клиента к другому телефону. -->

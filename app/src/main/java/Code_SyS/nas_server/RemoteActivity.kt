@@ -1,5 +1,6 @@
 package Code_SyS.nas_server
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -7,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +18,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +31,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -52,6 +56,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -179,9 +184,17 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var selectedSource by remember { mutableStateOf<String?>(null) }
     var uploads by remember { mutableStateOf<List<UploadTask>>(emptyList()) }
-    var fileToDelete by remember { mutableStateOf<RemoteFile?>(null) }
+    var filesToDelete by remember { mutableStateOf<List<RemoteFile>>(emptyList()) }
     var viewer by remember { mutableStateOf<ViewerState?>(null) }
     var joined by remember { mutableStateOf(false) }
+    /** Текущая папка на хосте; пустая строка — корень. */
+    var currentPath by remember { mutableStateOf("") }
+    var showCreateFolder by remember { mutableStateOf(false) }
+    var entryToRename by remember { mutableStateOf<RemoteFile?>(null) }
+    var entriesToMove by remember { mutableStateOf<List<RemoteFile>>(emptyList()) }
+    var moveFolders by remember { mutableStateOf<List<String>?>(null) }
+    // Путь фиксируем в момент выбора файлов: за время диалога можно уйти в другую папку.
+    var uploadTarget by remember { mutableStateOf("") }
 
     // Ручное и автоматическое обновление не должны идти одновременно.
     val refreshLock = remember { Mutex() }
@@ -190,8 +203,9 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
         if (!refreshLock.tryLock()) return
         if (showSpinner) refreshing = true
         try {
+            val path = currentPath
             val (loadedFiles, loadedGalleries) = withContext(Dispatchers.IO) {
-                client.files() to client.galleries()
+                client.files(path) to client.galleries()
             }
             files = loadedFiles
             galleries = loadedGalleries
@@ -234,10 +248,18 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
         }
     }
 
+    fun openFolder(path: String) {
+        currentPath = path
+        files = null
+        query = ""
+        scope.launch { refresh(showSpinner = false) }
+    }
+
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val destination = uploadTarget
 
         scope.launch {
             for (uri in uris) {
@@ -259,11 +281,13 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                             name = shared.name,
                             size = shared.size,
                             openStream = { shared.openStream(context) },
-                        ) { sent ->
-                            uploads = uploads.map { task ->
-                                if (task.id == id) task.copy(sent = sent) else task
-                            }
-                        }
+                            onProgress = { sent ->
+                                uploads = uploads.map { task ->
+                                    if (task.id == id) task.copy(sent = sent) else task
+                                }
+                            },
+                            path = destination,
+                        )
                     }
                     uploads = uploads.map { task ->
                         if (task.id == id) {
@@ -289,32 +313,171 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
         }
     }
 
-    fileToDelete?.let { file ->
+    if (filesToDelete.isNotEmpty()) {
+        val targets = filesToDelete
         AlertDialog(
-            onDismissRequest = { fileToDelete = null },
-            title = { Text("Удалить файл на телефоне?") },
-            text = { Text(file.name) },
+            onDismissRequest = { filesToDelete = emptyList() },
+            title = {
+                Text(
+                    when {
+                        targets.size == 1 && targets.first().isDirectory -> "Удалить папку на телефоне?"
+                        targets.size == 1 -> "Удалить файл на телефоне?"
+                        else -> "Удалить ${targets.size} элементов на телефоне?"
+                    }
+                )
+            },
+            text = {
+                Text(
+                    when {
+                        targets.size == 1 -> targets.first().name
+                        targets.any { it.isDirectory } ->
+                            "Выбранные файлы и папки будут удалены на телефоне-хосте. Содержимое папок тоже удалится."
+                        else -> "Выбранные файлы будут удалены на телефоне-хосте."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    fileToDelete = null
+                    filesToDelete = emptyList()
                     scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) { client.deleteFile(file.name) }
-                            refresh(showSpinner = false)
-                        } catch (e: Exception) {
-                            Toast.makeText(
-                                context,
-                                e.message ?: "Не удалось удалить файл",
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                        var failed = 0
+                        var firstError: String? = null
+                        withContext(Dispatchers.IO) {
+                            for (target in targets) {
+                                try {
+                                    client.deleteFile(target.path, recursive = target.isDirectory)
+                                } catch (e: Exception) {
+                                    failed++
+                                    if (firstError == null) firstError = e.message
+                                }
+                            }
+                        }
+                        refresh(showSpinner = false)
+                        if (failed > 0) {
+                            val message = if (failed == 1) {
+                                firstError ?: "Не удалось удалить файл"
+                            } else {
+                                "Не удалось удалить файлов: $failed"
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
                     }
                 }) { Text("Удалить") }
             },
             dismissButton = {
-                TextButton(onClick = { fileToDelete = null }) { Text("Отмена") }
+                TextButton(onClick = { filesToDelete = emptyList() }) { Text("Отмена") }
             },
         )
+    }
+
+    if (showCreateFolder) {
+        var folderName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showCreateFolder = false },
+            title = { Text("Новая папка") },
+            text = {
+                OutlinedTextField(
+                    value = folderName,
+                    onValueChange = { folderName = it },
+                    placeholder = { Text("Например, Отпуск", fontSize = 14.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val name = folderName.trim()
+                        if (name.isEmpty()) return@TextButton
+                        showCreateFolder = false
+                        scope.launch {
+                            val created = runCatching {
+                                withContext(Dispatchers.IO) { client.createFolder(currentPath, name) }
+                            }.isSuccess
+                            if (created) {
+                                refresh(showSpinner = false)
+                            } else {
+                                Toast.makeText(context, "Не удалось создать папку", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = folderName.isNotBlank(),
+                ) { Text("Создать") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateFolder = false }) { Text("Отмена") }
+            },
+        )
+    }
+
+    entryToRename?.let { entry ->
+        RemoteRenameDialog(
+            currentName = entry.name,
+            isDirectory = entry.isDirectory,
+            onDismiss = { entryToRename = null },
+            onRename = { newName ->
+                entryToRename = null
+                scope.launch {
+                    val renamed = runCatching {
+                        withContext(Dispatchers.IO) { client.rename(entry.path, newName) }
+                    }.isSuccess
+                    refresh(showSpinner = false)
+                    if (!renamed) {
+                        Toast.makeText(
+                            context,
+                            "Не удалось переименовать: имя занято или недопустимо",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+        )
+    }
+
+    if (entriesToMove.isNotEmpty()) {
+        val folders = moveFolders
+        if (folders != null) {
+            val moving = entriesToMove
+            RemoteMoveDialog(
+                folders = folders,
+                count = moving.size,
+                onDismiss = {
+                    entriesToMove = emptyList()
+                    moveFolders = null
+                },
+                onMove = { target ->
+                    entriesToMove = emptyList()
+                    moveFolders = null
+                    scope.launch {
+                        var failed = 0
+                        withContext(Dispatchers.IO) {
+                            for (entry in moving) {
+                                try {
+                                    client.move(entry.path, target)
+                                } catch (_: Exception) {
+                                    failed++
+                                }
+                            }
+                        }
+                        refresh(showSpinner = false)
+                        if (failed > 0) {
+                            Toast.makeText(
+                                context,
+                                if (failed == 1) "Не удалось переместить элемент"
+                                else "Не удалось переместить: $failed",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                },
+            )
+        }
+    }
+
+    // Внутри папки системный «назад» поднимается на уровень выше.
+    BackHandler(enabled = currentPath.isNotEmpty()) {
+        openFolder(currentPath.substringBeforeLast('/', ""))
     }
 
     viewer?.let { state ->
@@ -403,11 +566,47 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                 RemoteTab.FILES -> FilesTab(
                     client = client,
                     files = files,
+                    currentPath = currentPath,
                     query = query,
                     onQueryChange = { query = it },
                     uploads = uploads,
-                    onOpen = { file -> openExternal(context, client.browserUrl(client.filePath(file.name))) },
-                    onDelete = { fileToDelete = it },
+                    onOpen = { file ->
+                        if (file.isDirectory) {
+                            openFolder(file.path)
+                        } else {
+                            openExternal(context, client.browserUrl(client.filePath(file.path)))
+                        }
+                    },
+                    onNavigateUp = {
+                        openFolder(currentPath.substringBeforeLast('/', ""))
+                    },
+                    onCreateFolder = { showCreateFolder = true },
+                    onRename = { entryToRename = it },
+                    onDelete = { filesToDelete = listOf(it) },
+                    onDeleteMany = { filesToDelete = it },
+                    onMoveMany = { chosen ->
+                        scope.launch {
+                            val folders = runCatching {
+                                withContext(Dispatchers.IO) { client.folders() }
+                            }.getOrNull()
+                            if (folders == null) {
+                                Toast.makeText(
+                                    context,
+                                    "Не удалось получить список папок",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            } else {
+                                // Внутрь самой себя или своей вложенной папки перемещать нельзя.
+                                moveFolders = folders.filterNot { folder ->
+                                    chosen.any { entry ->
+                                        entry.isDirectory &&
+                                            (folder == entry.path || folder.startsWith(entry.path + "/"))
+                                    }
+                                }
+                                entriesToMove = chosen
+                            }
+                        }
+                    },
                 )
 
                 RemoteTab.GALLERY -> GalleryTab(
@@ -435,6 +634,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
             Button(
                 onClick = {
                     try {
+                        uploadTarget = currentPath
                         picker.launch(arrayOf("*/*"))
                     } catch (_: ActivityNotFoundException) {
                         Toast.makeText(context, "Нет выбора файлов", Toast.LENGTH_SHORT).show()
@@ -503,11 +703,17 @@ private fun TabPill(text: String, selected: Boolean, modifier: Modifier, onClick
 private fun FilesTab(
     client: RemoteClient,
     files: List<RemoteFile>?,
+    currentPath: String,
     query: String,
     onQueryChange: (String) -> Unit,
     uploads: List<UploadTask>,
     onOpen: (RemoteFile) -> Unit,
+    onNavigateUp: () -> Unit,
+    onCreateFolder: () -> Unit,
+    onRename: (RemoteFile) -> Unit,
     onDelete: (RemoteFile) -> Unit,
+    onDeleteMany: (List<RemoteFile>) -> Unit,
+    onMoveMany: (List<RemoteFile>) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val visible = remember(files, query) {
@@ -516,27 +722,131 @@ private fun FilesTab(
         if (needle.isEmpty()) source else source.filter { it.name.contains(needle, ignoreCase = true) }
     }
 
+    // Выделение держим путями: список с хоста обновляется сам, а выбор
+    // не должен зависеть от этих обновлений. При смене папки выбор сбрасывается.
+    var selectionMode by remember(currentPath) { mutableStateOf(false) }
+    var selected by remember(currentPath) { mutableStateOf<Set<String>>(emptySet()) }
+    val selectedFiles = remember(files, selected) {
+        files.orEmpty().filter { it.path in selected }
+    }
+    val allSelected = visible.isNotEmpty() && visible.all { it.path in selected }
+
+    fun toggleSelection(path: String) {
+        selected = if (path in selected) selected - path else selected + path
+    }
+
+    fun clearSelection() {
+        selectionMode = false
+        selected = emptySet()
+    }
+
+    // В режиме выделения «назад» выходит из него, а не закрывает окно.
+    BackHandler(enabled = selectionMode) { clearSelection() }
+
     Column(modifier = Modifier.fillMaxSize()) {
         for (upload in uploads) {
             UploadRow(upload)
             Spacer(modifier = Modifier.height(6.dp))
         }
 
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            placeholder = { Text("Поиск по файлам", fontSize = 14.sp) },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = scheme.surface,
-                unfocusedContainerColor = scheme.surface,
-                focusedBorderColor = scheme.primary,
-                unfocusedBorderColor = scheme.outline.copy(alpha = .6f),
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(modifier = Modifier.height(6.dp))
+        if (selectionMode) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Выбрано ${selectedFiles.size}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    selected = if (allSelected) emptySet() else visible.map { it.path }.toSet()
+                }) {
+                    Text(if (allSelected) "Снять" else "Все", fontSize = 12.sp)
+                }
+                TextButton(onClick = { clearSelection() }) {
+                    Text("Отмена", fontSize = 12.sp)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        val chosen = selectedFiles
+                        clearSelection()
+                        onMoveMany(chosen)
+                    },
+                    enabled = selectedFiles.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Переместить", fontSize = 12.sp)
+                }
+                Button(
+                    onClick = {
+                        val chosen = selectedFiles
+                        clearSelection()
+                        onDeleteMany(chosen)
+                    },
+                    enabled = selectedFiles.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = scheme.error,
+                        contentColor = scheme.onError,
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        text = if (selectedFiles.size == 1) "Удалить файл" else "Удалить выбранные",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (currentPath.isNotEmpty()) {
+                    TextButton(
+                        onClick = onNavigateUp,
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) { Text("← Назад", fontSize = 12.sp) }
+                    Text(
+                        text = currentPath,
+                        fontSize = 11.5.sp,
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+                TextButton(
+                    onClick = onCreateFolder,
+                    contentPadding = PaddingValues(horizontal = 6.dp),
+                ) { Text("＋ Папка", fontSize = 12.sp) }
+            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                placeholder = { Text("Поиск по файлам и папкам", fontSize = 14.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = scheme.surface,
+                    unfocusedContainerColor = scheme.surface,
+                    focusedBorderColor = scheme.primary,
+                    unfocusedBorderColor = scheme.outline.copy(alpha = .6f),
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+        }
 
         if (files == null) {
             LoadingBox()
@@ -548,20 +858,33 @@ private fun FilesTab(
                 if (visible.isEmpty()) {
                     item {
                         EmptyCard(
-                            title = if (files.isEmpty()) "На телефоне пока нет файлов" else "Ничего не найдено",
-                            hint = if (files.isEmpty()) {
-                                "Отправьте файл кнопкой ниже — он появится в этом списке"
-                            } else {
-                                "Измените запрос в поиске"
+                            title = when {
+                                files.isEmpty() && currentPath.isEmpty() -> "На телефоне пока нет файлов"
+                                files.isEmpty() -> "Папка пуста"
+                                else -> "Ничего не найдено"
+                            },
+                            hint = when {
+                                files.isEmpty() && currentPath.isEmpty() ->
+                                    "Отправьте файл кнопкой ниже — он появится в этом списке"
+                                files.isEmpty() -> "Отправьте файл кнопкой ниже — он попадёт в эту папку"
+                                else -> "Измените запрос в поиске"
                             },
                         )
                     }
                 }
-                items(visible, key = { it.name }) { file ->
+                items(visible, key = { it.path }) { file ->
                     RemoteFileRow(
                         client = client,
                         file = file,
+                        selected = file.path in selected,
+                        selectionMode = selectionMode,
                         onOpen = { onOpen(file) },
+                        onLongPress = {
+                            selectionMode = true
+                            selected = selected + file.path
+                        },
+                        onToggle = { toggleSelection(file.path) },
+                        onRename = { onRename(file) },
                         onDelete = { onDelete(file) },
                     )
                 }
@@ -632,21 +955,30 @@ private fun UploadRow(upload: UploadTask) {
 private fun RemoteFileRow(
     client: RemoteClient,
     file: RemoteFile,
+    selected: Boolean,
+    selectionMode: Boolean,
     onOpen: () -> Unit,
+    onLongPress: () -> Unit,
+    onToggle: () -> Unit,
+    onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val badge = fileBadge(file.name)
+    val badge = if (file.isDirectory) "DIR" to Color(0xFF7B9CFF) else fileBadge(file.name)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onOpen)
+            .combinedClickable(
+                onClick = { if (selectionMode) onToggle() else onOpen() },
+                onLongClick = { if (selected) onToggle() else onLongPress() },
+            )
+            .background(if (selected) scheme.primary.copy(alpha = .1f) else Color.Transparent)
             .padding(vertical = 7.dp, horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Для картинок и видео — превью с хоста, как в браузерном списке.
-        val isMedia = badge.first == "IMG" || badge.first == "VID"
+        val isMedia = !file.isDirectory && (badge.first == "IMG" || badge.first == "VID")
         Box(
             modifier = Modifier
                 .size(42.dp)
@@ -658,7 +990,7 @@ private fun RemoteFileRow(
             if (isMedia) {
                 RemoteThumb(
                     client = client,
-                    path = client.fileThumbPath(file.name),
+                    path = client.fileThumbPath(file.path),
                     maxSize = 128,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
@@ -685,16 +1017,149 @@ private fun RemoteFileRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${FileFormat.size(file.size)} · ${FileFormat.date(file.modified)}",
+                text = if (file.isDirectory) {
+                    "Папка"
+                } else {
+                    "${FileFormat.size(file.size)} · ${FileFormat.date(file.modified)}"
+                },
                 fontSize = 11.5.sp,
                 color = scheme.onSurfaceVariant,
             )
         }
-        TextButton(onClick = onDelete) {
-            Text("Удалить", fontSize = 11.5.sp, color = scheme.onSurfaceVariant)
+        if (selectionMode) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) scheme.primary else Color.Transparent)
+                    .border(1.dp, if (selected) scheme.primary else scheme.outline, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Text("✓", fontSize = 12.sp, color = scheme.onPrimary)
+                }
+            }
+        } else {
+            TextButton(
+                onClick = onRename,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text("✎", fontSize = 13.sp, color = scheme.onSurfaceVariant)
+            }
+            TextButton(
+                onClick = onDelete,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text("Удалить", fontSize = 11.5.sp, color = scheme.onSurfaceVariant)
+            }
         }
     }
     androidx.compose.material3.HorizontalDivider(color = scheme.outlineVariant)
+}
+
+/** Диалог переименования файла или папки на хосте. */
+@Composable
+private fun RemoteRenameDialog(
+    currentName: String,
+    isDirectory: Boolean,
+    onRename: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember(currentName) { mutableStateOf(currentName) }
+    val trimmed = name.trim()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isDirectory) "Переименовать папку" else "Переименовать файл") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Имя", fontSize = 12.sp) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRename(trimmed) },
+                enabled = trimmed.isNotEmpty() && trimmed != currentName,
+            ) { Text("Сохранить") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
+}
+
+/** Диалог перемещения выбранных файлов и папок в папку на хосте. */
+@Composable
+private fun RemoteMoveDialog(
+    folders: List<String>,
+    count: Int,
+    onMove: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var target by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Переместить") },
+        text = {
+            Column {
+                Text(
+                    text = if (count == 1) "1 элемент" else "Элементов: $count",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    item {
+                        RemoteMoveTargetRow(
+                            label = "Все файлы (корень)",
+                            selected = target.isEmpty(),
+                            onClick = { target = "" },
+                        )
+                    }
+                    items(folders, key = { it }) { folder ->
+                        RemoteMoveTargetRow(
+                            label = folder,
+                            selected = target == folder,
+                            onClick = { target = folder },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onMove(target) }, enabled = count > 0) {
+                Text("Переместить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
+}
+
+@Composable
+private fun RemoteMoveTargetRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 @Composable
@@ -841,6 +1306,53 @@ private fun RemoteViewer(
     ) { state.items.size }
     val scope = rememberCoroutineScope()
     val current = state.items.getOrNull(pagerState.currentPage) ?: state.items.first()
+    val context = LocalContext.current
+
+    // Сохранение идёт в системные «Загрузки»: на Android 10+ через MediaStore
+    // без разрешений, на старых версиях — после запроса WRITE_EXTERNAL_STORAGE.
+    var savingId by remember { mutableStateOf<String?>(null) }
+    var saveProgress by remember { mutableStateOf(-1f) }
+    var pendingSave by remember { mutableStateOf<RemoteMediaItem?>(null) }
+
+    fun save(item: RemoteMediaItem) {
+        if (savingId != null) return
+        savingId = item.id
+        saveProgress = -1f
+        scope.launch {
+            val saved = HostDownloader.save(
+                context = context,
+                url = client.browserUrl(item.url),
+                name = item.name,
+            ) { fraction -> saveProgress = fraction }
+            savingId = null
+            Toast.makeText(
+                context,
+                if (saved != null) "Сохранено в Загрузки" else "Не удалось сохранить файл",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val item = pendingSave
+        pendingSave = null
+        if (granted && item != null) {
+            save(item)
+        } else if (item != null) {
+            Toast.makeText(context, "Нужен доступ к памяти", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun requestSave(item: RemoteMediaItem) {
+        if (HostDownloader.hasPermission(context)) {
+            save(item)
+        } else {
+            pendingSave = item
+            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
 
     Dialog(
         onDismissRequest = onClose,
@@ -945,6 +1457,26 @@ private fun RemoteViewer(
                         text = "${pagerState.currentPage + 1} / ${state.items.size}",
                         fontSize = 10.5.sp,
                         color = Color.White.copy(alpha = .6f),
+                    )
+                }
+                if (savingId == null) {
+                    TextButton(
+                        onClick = { requestSave(current) },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text("Сохранить", fontSize = 11.5.sp, color = Color.White)
+                    }
+                } else {
+                    // Пока файл едет, кнопку заменяет прогресс.
+                    Text(
+                        text = if (saveProgress < 0f) {
+                            "Сохраняю…"
+                        } else {
+                            "Сохраняю ${(saveProgress * 100).toInt()}%"
+                        },
+                        fontSize = 11.5.sp,
+                        color = Color.White.copy(alpha = .8f),
+                        modifier = Modifier.padding(horizontal = 6.dp),
                     )
                 }
                 if (current.kind != "image") {

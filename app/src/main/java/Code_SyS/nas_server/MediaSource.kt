@@ -51,6 +51,7 @@ interface MediaSource {
 class ReceivedMediaSource(
     private val files: () -> List<File>,
     private val thumbnailer: (File) -> ByteArray? = { null },
+    private val root: () -> File? = { null },
 ) : MediaSource {
 
     override val key: String = "received"
@@ -59,7 +60,8 @@ class ReceivedMediaSource(
     override fun items(): List<MediaItem> = files().map { file ->
         val mime = MimeTypes.forFileName(file.name)
         MediaItem(
-            id = file.name,
+            // В разных папках бывают одинаковые имена: id — путь от корня.
+            id = idOf(file),
             name = file.name,
             size = file.length(),
             dateMillis = file.lastModified(),
@@ -69,8 +71,13 @@ class ReceivedMediaSource(
     }
 
     override fun open(item: MediaItem): InputStream? =
-        files().firstOrNull { it.name == item.id }?.inputStream()
+        files().firstOrNull { idOf(it) == item.id }?.inputStream()
 
     override fun thumbnail(item: MediaItem): ByteArray? =
-        files().firstOrNull { it.name == item.id }?.let(thumbnailer)
+        files().firstOrNull { idOf(it) == item.id }?.let(thumbnailer)
+
+    private fun idOf(file: File): String {
+        val storage = root() ?: return file.name
+        return StoragePaths.relativePath(storage, file) ?: file.name
+    }
 }
