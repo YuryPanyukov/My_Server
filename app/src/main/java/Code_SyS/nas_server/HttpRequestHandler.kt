@@ -861,7 +861,9 @@ class HttpRequestHandler(
                             .append("\" data-dir=\"1\"><label class=\"pick\" title=\"Выбрать\">")
                             .append("<input type=\"checkbox\" class=\"sel\" data-path=\"")
                             .append(htmlEscape(entry.path)).append("\"></label>")
-                            .append("<span class=\"file-thumb folder-thumb\"><span class=\"ftype\" data-kind=\"folder\">DIR</span></span>")
+                            .append("<span class=\"file-thumb folder-thumb\"><span class=\"ftype\" data-kind=\"")
+                            .append(FileKind.FOLDER.cssClass).append("\">")
+                            .append(FileKind.FOLDER.badge).append("</span></span>")
                             .append("<span class=\"file-main\"><a class=\"file\" href=\"/?path=")
                             .append(encodeRelativePath(entry.path)).append("\">")
                             .append(htmlEscape(entry.name)).append("</a>")
@@ -876,7 +878,7 @@ class HttpRequestHandler(
                         continue
                     }
 
-                    val kind = fileKind(entry.name)
+                    val kind = FileKind.ofFileName(entry.name).cssClass
                     val encodedPath = encodeRelativePath(entry.path)
                     append("<li class=\"file-item\" data-name=\"")
                         .append(htmlEscape(entry.name.lowercase(Locale.ROOT)))
@@ -975,8 +977,8 @@ class HttpRequestHandler(
         } else {
             buildString {
                 for (entry in entries) {
-                    val label = if (entry.isDirectory) "DIR" else fileTypeLabel(entry.name)
-                    val kind = if (entry.isDirectory) "folder" else fileKind(entry.name)
+                    val label = if (entry.isDirectory) FileKind.FOLDER.badge else fileTypeLabel(entry.name)
+                    val kind = if (entry.isDirectory) FileKind.FOLDER.cssClass else FileKind.ofFileName(entry.name).cssClass
                     append("<li class=\"file-item\" data-id=\"").append(htmlEscape(entry.id))
                         .append("\"><span class=\"file-thumb\" data-kind=\"").append(kind)
                         .append("\"><span class=\"ftype\" data-kind=\"").append(kind).append("\">")
@@ -1205,16 +1207,6 @@ class HttpRequestHandler(
             return
         }
         writeResponse(output, 200, "OK", CONTENT_TYPE_JSON, "{\"ok\":true}".toByteArray())
-    }
-
-    /** CSS-категория файла: от неё зависит цвет значка в списке. */
-    private fun fileKind(name: String): String = when (name.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
-        "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg" -> "image"
-        "mp4", "mkv", "mov", "avi", "webm", "m4v" -> "video"
-        "mp3", "wav", "flac", "aac", "ogg", "m4a" -> "audio"
-        "pdf", "doc", "docx", "txt", "md", "rtf", "xls", "xlsx", "ppt", "pptx" -> "doc"
-        "zip", "rar", "7z", "tar", "gz" -> "archive"
-        else -> "other"
     }
 
     private fun fileTypeLabel(name: String): String {
@@ -1801,9 +1793,9 @@ class HttpRequestHandler(
 
     /** Превью в браузере только для безопасных типов; остальное — скачивание. */
     private fun isInlinePreview(contentType: String): Boolean =
-        contentType.startsWith("image/") ||
-            contentType.startsWith("video/") ||
-            contentType.startsWith("audio/") ||
+        MimeTypes.isImage(contentType) ||
+            MimeTypes.isVideo(contentType) ||
+            MimeTypes.isAudio(contentType) ||
             contentType == "application/pdf" ||
             contentType.startsWith("text/plain")
 

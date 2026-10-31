@@ -38,6 +38,13 @@ object MimeTypes {
         }
     }
 
+    /** Одна проверка «это медиа» для превью, Галереи и отправки. */
+    fun isImage(mimeType: String): Boolean = mimeType.startsWith("image/")
+
+    fun isVideo(mimeType: String): Boolean = mimeType.startsWith("video/")
+
+    fun isAudio(mimeType: String): Boolean = mimeType.startsWith("audio/")
+
     /** Текстовые файлы отдаются с кодировкой, чтобы браузер не угадывал её сам. */
     fun forHttp(name: String): String {
         val base = forFileName(name)

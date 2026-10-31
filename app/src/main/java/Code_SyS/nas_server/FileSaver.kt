@@ -131,17 +131,10 @@ class FileSaver(private val context: Context) {
          * одновременным загрузкам выбрать один и тот же путь.
          */
         private fun createUniqueFile(dir: File, name: String): File {
-            val dot = name.lastIndexOf('.')
-            val hasExtension = dot > 0
-            val base = if (hasExtension) name.substring(0, dot) else name
-            val extension = if (hasExtension) name.substring(dot) else ""
-
-            var index = 0
+            val candidates = FileNames.numbered(name).iterator()
             while (true) {
-                val candidateName = if (index == 0) name else "$base ($index)$extension"
-                val candidate = File(dir, candidateName)
+                val candidate = File(dir, candidates.next())
                 if (candidate.createNewFile()) return candidate
-                index++
             }
         }
     }

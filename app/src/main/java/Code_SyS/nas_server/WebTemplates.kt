@@ -414,7 +414,8 @@ ${THEME_CSS}
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
-  .search { position: relative; }
+  /* Отступ от панели действий такой же, как от строки поиска до списка файлов. */
+  .search { position: relative; margin: 12px 0 0; }
   .search svg {
     position: absolute;
     left: 14px;
@@ -682,6 +683,15 @@ ${THEME_CSS}
     .state { min-width: 52px; }
     ul.files.grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
     .toolbar .ghost-btn { font-size: 11.5px; }
+    /* На телефоне «Выбрано N» — своей строкой, действия — одной компактной
+       строкой: иначе «Отмена» одна уезжает на третью строку. */
+    .sel-bar { gap: 6px; padding: 8px 9px; }
+    .sel-bar span { flex-basis: 100%; margin-right: 0; }
+    .sel-bar .btn-small { padding: 6px 8px; }
+  }
+  /* Узкие экраны: название рядом с логотипом уже налезает на кнопки. */
+  @media (max-width: 350px) {
+    .brand-text { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -807,11 +817,12 @@ ${THEME_SCRIPT}
   // а Wi-Fi не захлёбывается очередью запросов.
   var MAX_PARALLEL = 3;
 
-  var IMAGE = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'bmp', 'svg'];
-  var VIDEO = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v'];
-  var AUDIO = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'];
-  var DOC = ['pdf', 'doc', 'docx', 'txt', 'md', 'rtf', 'xls', 'xlsx', 'ppt', 'pptx'];
-  var ARCHIVE = ['zip', 'rar', '7z', 'tar', 'gz'];
+  // Расширения приходят из той же таблицы, что и значки в приложении.
+  var IMAGE = ${FileKind.IMAGE.jsArray};
+  var VIDEO = ${FileKind.VIDEO.jsArray};
+  var AUDIO = ${FileKind.AUDIO.jsArray};
+  var DOC = ${FileKind.DOC.jsArray};
+  var ARCHIVE = ${FileKind.ARCHIVE.jsArray};
 
   var items = [];
   var pending = [];

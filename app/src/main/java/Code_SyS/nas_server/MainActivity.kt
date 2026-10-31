@@ -55,13 +55,13 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import Code_SyS.nas_server.ui.theme.LanDropTheme
+import Code_SyS.nas_server.ui.theme.tint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
-import java.util.Locale
 import java.util.TimeZone
 
 class MainActivity : ComponentActivity() {
@@ -227,6 +227,9 @@ fun FileReceiverScreen(
     /** Сколько фото/видео ждёт подтверждения удаления из браузера. */
     var pendingDeletes by remember { mutableIntStateOf(0) }
     val fileSaver = remember { FileSaver(context) }
+    /** Очередь отправки выделенных файлов на недавний телефон. */
+    val uploadQueue = rememberUploadQueue()
+    var pendingSend by remember { mutableStateOf<List<UploadFile>?>(null) }
 
     // Список недавних телефонов обновляется после возврата со сканера.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -484,7 +487,7 @@ fun FileReceiverScreen(
                 libraryUrl = galleryUrl?.replace("/gallery", "/library"),
                 shareUrl = shareUrl,
                 running = isServiceRunning,
-                onOpen = { url -> openBrowser(context, url) },
+                onOpen = { url -> openUrl(context, url, "Нет браузера") },
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -588,6 +591,14 @@ fun FileReceiverScreen(
                         }
                     },
                     canRename = selectedEntries.size == 1,
+                    canSend = selectedFiles.isNotEmpty() && recentHosts.isNotEmpty(),
+                    onSend = {
+                        pendingSend = selectedFiles.map { file ->
+                            UploadFile(file.name, file.length()) {
+                                runCatching { file.inputStream() }.getOrNull()
+                            }
+                        }
+                    },
                     onDelete = { filesToDelete = selectedEntries },
                     onRename = { entryToRename = selectedEntries.firstOrNull() },
                     onMove = {
@@ -774,6 +785,43 @@ fun FileReceiverScreen(
                 }
             },
         )
+    }
+
+    if (pendingSend != null) {
+        HostPickerDialog(
+            title = "Отправить на телефон",
+            hosts = recentHosts,
+            onPick = { target ->
+                val files = pendingSend.orEmpty()
+                pendingSend = null
+                uploadQueue.enqueue(target, files)
+                clearSelection()
+            },
+            onDismiss = { pendingSend = null },
+        )
+    }
+
+    if (uploadQueue.open) {
+        UploadQueueDialog(
+            queue = uploadQueue,
+            onClose = { uploadQueue.dismiss() },
+        )
+    }
+
+    // Пачка ушла: запоминаем телефон и говорим, сколько файлов принято.
+    LaunchedEffect(uploadQueue.completed) {
+        val done = uploadQueue.completed ?: return@LaunchedEffect
+        val target = uploadQueue.target ?: return@LaunchedEffect
+        val sent = done.delivered
+        if (sent > 0) {
+            RecentHosts.remember(context, target)
+            recentHosts = RecentHosts.list(context)
+            Toast.makeText(
+                context,
+                if (sent == 1) "Отправлено на ${target.host}" else "Отправлено файлов: $sent",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     if (showSelection) {
@@ -1273,7 +1321,9 @@ private fun SelectionHeader(
     allSelected: Boolean,
     canArchive: Boolean,
     canRename: Boolean,
+    canSend: Boolean,
     onSelectAll: () -> Unit,
+    onSend: () -> Unit,
     onDelete: () -> Unit,
     onRename: () -> Unit,
     onMove: () -> Unit,
@@ -1342,6 +1392,20 @@ private fun SelectionHeader(
                 }
             }
         }
+        // Отправка на телефон — отдельной строкой: четыре кнопки в ряд
+        // на узком экране превращают подписи в кашу.
+        if (canSend) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onSend,
+                enabled = count > 0,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Отправить на телефон", fontSize = 12.sp)
+            }
+        }
         Spacer(modifier = Modifier.height(10.dp))
     }
 }
@@ -1365,7 +1429,7 @@ private fun ReceivedFileTile(
     onMenuDelete: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val kind = if (entry.isDirectory) FileKind.FOLDER else file?.let { kindOf(it) } ?: FileKind.OTHER
+    val kind = if (entry.isDirectory) FileKind.FOLDER else file?.let { FileKind.ofFileName(it.name) } ?: FileKind.OTHER
     val shape = RoundedCornerShape(14.dp)
     var menuOpen by remember { mutableStateOf(false) }
     Column(
@@ -1387,10 +1451,10 @@ private fun ReceivedFileTile(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(shape)
-                .background(kind.color.copy(alpha = .12f))
+                .background(kind.tint.copy(alpha = .12f))
                 .border(
                     width = if (selected) 2.dp else 1.dp,
-                    color = if (selected) scheme.primary else kind.color.copy(alpha = .28f),
+                    color = if (selected) scheme.primary else kind.tint.copy(alpha = .28f),
                     shape = shape,
                 ),
             contentAlignment = Alignment.Center,
@@ -1399,11 +1463,11 @@ private fun ReceivedFileTile(
                 FileThumb(file = file, kind = kind, modifier = Modifier.fillMaxSize())
             } else {
                 Text(
-                    text = kind.label,
+                    text = kind.badge,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.4.sp,
-                    color = kind.color,
+                    color = kind.tint,
                 )
             }
             // Меню на каждой плитке: удалить и переименовать можно без
@@ -1690,11 +1754,11 @@ private fun FileThumb(file: File, kind: FileKind, modifier: Modifier) {
     } else {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text(
-                text = kind.label,
+                text = kind.badge,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.4.sp,
-                color = kind.color,
+                color = kind.tint,
             )
         }
     }
@@ -1971,37 +2035,6 @@ private fun pickDate(context: android.content.Context, onPicked: (Long) -> Unit)
         today.get(Calendar.MONTH),
         today.get(Calendar.DAY_OF_MONTH),
     ).show()
-}
-
-private enum class FileKind(val label: String, val color: Color) {
-    FOLDER("DIR", Color(0xFF7B9CFF)),
-    IMAGE("IMG", Color(0xFFF5A623)),
-    VIDEO("VID", Color(0xFFB98CFF)),
-    AUDIO("AUD", Color(0xFF38D6C4)),
-    DOC("DOC", Color(0xFF6C9CFF)),
-    ARCHIVE("ZIP", Color(0xFFFF8A8A)),
-    OTHER("FILE", Color(0xFF98A2B3)),
-}
-
-private fun kindOf(file: File): FileKind {
-    val extension = file.extension.lowercase(Locale.ROOT)
-    return when (extension) {
-        "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg", "avif" -> FileKind.IMAGE
-        "mp4", "mkv", "mov", "avi", "webm", "m4v" -> FileKind.VIDEO
-        "mp3", "wav", "flac", "aac", "ogg", "m4a" -> FileKind.AUDIO
-        "pdf", "doc", "docx", "txt", "md", "rtf", "xls", "xlsx", "ppt", "pptx" -> FileKind.DOC
-        "zip", "rar", "7z", "tar", "gz" -> FileKind.ARCHIVE
-        else -> FileKind.OTHER
-    }
-}
-
-/** Открывает веб-интерфейс в системном браузере. */
-private fun openBrowser(context: Context, url: String) {
-    try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    } catch (_: Exception) {
-        Toast.makeText(context, "Нет браузера", Toast.LENGTH_SHORT).show()
-    }
 }
 
 /** Открывает принятый файл во внешнем приложении через FileProvider. */

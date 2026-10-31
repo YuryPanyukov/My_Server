@@ -19,8 +19,8 @@ data class MediaItem(
 
     companion object {
         fun kindOf(mimeType: String): Kind = when {
-            mimeType.startsWith("image/") -> Kind.IMAGE
-            mimeType.startsWith("video/") -> Kind.VIDEO
+            MimeTypes.isImage(mimeType) -> Kind.IMAGE
+            MimeTypes.isVideo(mimeType) -> Kind.VIDEO
             else -> Kind.OTHER
         }
     }

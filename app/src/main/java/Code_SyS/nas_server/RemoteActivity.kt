@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -51,7 +50,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -93,13 +91,13 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import Code_SyS.nas_server.ui.theme.LanDropTheme
+import Code_SyS.nas_server.ui.theme.tint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 /**
  * Окно удалённого просмотра: открывается по QR и работает как браузерная
@@ -160,15 +158,6 @@ private enum class RemoteTab { FILES, GALLERY }
 
 private data class ViewerState(val items: List<RemoteMediaItem>, val index: Int)
 
-private data class UploadTask(
-    val id: Long,
-    val name: String,
-    val size: Long,
-    val sent: Long = 0,
-    val done: Boolean = false,
-    val error: String? = null,
-)
-
 @Composable
 private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
     val context = LocalContext.current
@@ -183,10 +172,13 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
     var refreshing by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var selectedSource by remember { mutableStateOf<String?>(null) }
-    var uploads by remember { mutableStateOf<List<UploadTask>>(emptyList()) }
+    val uploadQueue = rememberUploadQueue()
     var filesToDelete by remember { mutableStateOf<List<RemoteFile>>(emptyList()) }
     var viewer by remember { mutableStateOf<ViewerState?>(null) }
     var joined by remember { mutableStateOf(false) }
+    /** Телефоны, на которые можно переслать файлы с хоста; сам хост не в списке. */
+    var otherHosts by remember(target) { mutableStateOf<List<ShareTarget>>(emptyList()) }
+    var sendTargets by remember { mutableStateOf<List<RemoteFile>?>(null) }
     /** Текущая папка на хосте; пустая строка — корень. */
     var currentPath by remember { mutableStateOf("") }
     var showCreateFolder by remember { mutableStateOf(false) }
@@ -255,6 +247,19 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
         scope.launch { refresh(showSpinner = false) }
     }
 
+    // Список недавних телефонов появляется после первого успешного подключения.
+    LaunchedEffect(joined) {
+        if (joined) otherHosts = RecentHosts.list(context).filter { it != target }
+    }
+
+    // Пачка ушла: обновляем список и убираем строки очереди.
+    LaunchedEffect(uploadQueue.completed) {
+        if (uploadQueue.completed == null) return@LaunchedEffect
+        refresh(showSpinner = false)
+        delay(3_000)
+        uploadQueue.dismiss()
+    }
+
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -262,55 +267,42 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
         val destination = uploadTarget
 
         scope.launch {
-            for (uri in uris) {
-                val shared = withContext(Dispatchers.IO) { SharedFile.read(context, uri) }
-                if (shared == null || shared.size < 0) {
-                    Toast.makeText(
-                        context,
-                        "Не удалось определить размер файла",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    continue
-                }
-
-                val id = System.nanoTime()
-                uploads = uploads + UploadTask(id = id, name = shared.name, size = shared.size)
-                try {
-                    withContext(Dispatchers.IO) {
-                        client.upload(
-                            name = shared.name,
-                            size = shared.size,
-                            openStream = { shared.openStream(context) },
-                            onProgress = { sent ->
-                                uploads = uploads.map { task ->
-                                    if (task.id == id) task.copy(sent = sent) else task
-                                }
-                            },
-                            path = destination,
-                        )
-                    }
-                    uploads = uploads.map { task ->
-                        if (task.id == id) {
-                            task.copy(sent = shared.size, done = true)
-                        } else {
-                            task
-                        }
-                    }
-                } catch (e: Exception) {
-                    uploads = uploads.map { task ->
-                        if (task.id == id) {
-                            task.copy(error = e.message ?: "Не удалось отправить")
-                        } else {
-                            task
-                        }
-                    }
-                }
+            val sharedFiles = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri -> SharedFile.read(context, uri) }
             }
-
-            refresh(showSpinner = false)
-            delay(3_000)
-            uploads = uploads.filter { it.error != null }
+            if (sharedFiles.isEmpty()) {
+                Toast.makeText(context, "Не удалось прочитать файлы", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            // Файл без известного размера сервер не примет — очередь покажет
+            // его как «пропущен», а остальные отправит.
+            uploadQueue.enqueue(
+                target = target,
+                path = destination,
+                files = sharedFiles.map { shared ->
+                    UploadFile(shared.name, shared.size) { shared.openStream(context) }
+                },
+            )
         }
+    }
+
+    sendTargets?.let { chosen ->
+        HostPickerDialog(
+            title = "Отправить на телефон",
+            hosts = otherHosts,
+            onPick = { destination ->
+                sendTargets = null
+                // Файлы читаются с текущего хоста и сразу уходят на выбранный
+                // телефон: промежуточная копия на устройстве не нужна.
+                uploadQueue.enqueue(
+                    target = destination,
+                    files = chosen.map { file ->
+                        UploadFile(file.name, file.size) { client.openFile(file.path) }
+                    },
+                )
+            },
+            onDismiss = { sendTargets = null },
+        )
     }
 
     if (filesToDelete.isNotEmpty()) {
@@ -485,7 +477,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
             client = client,
             state = state,
             onClose = { viewer = null },
-            onExternal = { item -> openExternal(context, client.browserUrl(item.url)) },
+            onExternal = { item -> openUrl(context, client.browserUrl(item.url)) },
         )
     }
 
@@ -569,12 +561,14 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                     currentPath = currentPath,
                     query = query,
                     onQueryChange = { query = it },
-                    uploads = uploads,
+                    uploadQueue = uploadQueue,
+                    canSend = otherHosts.isNotEmpty() && !uploadQueue.summary.running,
+                    onSendMany = { chosen -> sendTargets = chosen },
                     onOpen = { file ->
                         if (file.isDirectory) {
                             openFolder(file.path)
                         } else {
-                            openExternal(context, client.browserUrl(client.filePath(file.path)))
+                            openUrl(context, client.browserUrl(client.filePath(file.path)))
                         }
                     },
                     onNavigateUp = {
@@ -624,7 +618,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             OutlinedButton(
-                onClick = { openExternal(context, client.browserUrl()) },
+                onClick = { openUrl(context, client.browserUrl()) },
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                 modifier = Modifier.weight(1f),
@@ -706,7 +700,9 @@ private fun FilesTab(
     currentPath: String,
     query: String,
     onQueryChange: (String) -> Unit,
-    uploads: List<UploadTask>,
+    uploadQueue: UploadQueueState,
+    canSend: Boolean,
+    onSendMany: (List<RemoteFile>) -> Unit,
     onOpen: (RemoteFile) -> Unit,
     onNavigateUp: () -> Unit,
     onCreateFolder: () -> Unit,
@@ -744,8 +740,8 @@ private fun FilesTab(
     BackHandler(enabled = selectionMode) { clearSelection() }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        for (upload in uploads) {
-            UploadRow(upload)
+        for (task in uploadQueue.tasks) {
+            UploadRow(task = task, onCancel = { uploadQueue.cancel(task.id) })
             Spacer(modifier = Modifier.height(6.dp))
         }
 
@@ -802,6 +798,24 @@ private fun FilesTab(
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
+                }
+            }
+            // Пересылка на другой телефон — отдельной строкой: в тесном ряду
+            // с «Переместить» и «Удалить» подпись не помещается.
+            if (canSend) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val chosen = selectedFiles
+                        clearSelection()
+                        onSendMany(chosen)
+                    },
+                    enabled = selectedFiles.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Отправить на телефон", fontSize = 12.sp)
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -894,64 +908,6 @@ private fun FilesTab(
 }
 
 @Composable
-private fun UploadRow(upload: UploadTask) {
-    val scheme = MaterialTheme.colorScheme
-    val failed = upload.error != null
-    Surface(
-        shape = RoundedCornerShape(13.dp),
-        color = if (failed) scheme.error.copy(alpha = .1f) else scheme.surface,
-        border = BorderStroke(1.dp, if (failed) scheme.error.copy(alpha = .4f) else scheme.outline.copy(alpha = .55f)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = upload.name,
-                    fontSize = 12.5.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = when {
-                        failed -> "ошибка"
-                        upload.done -> "готово"
-                        else -> "${(upload.sent * 100 / upload.size.coerceAtLeast(1))}%"
-                    },
-                    fontSize = 11.sp,
-                    color = when {
-                        failed -> scheme.error
-                        upload.done -> Color(0xFF3DDC97)
-                        else -> scheme.onSurfaceVariant
-                    },
-                )
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = {
-                    if (failed) 1f else (upload.sent.toFloat() / upload.size.coerceAtLeast(1)).coerceIn(0f, 1f)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .clip(RoundedCornerShape(999.dp)),
-                color = if (failed) scheme.error else scheme.primary,
-                trackColor = scheme.outlineVariant,
-            )
-            if (failed) {
-                Text(
-                    text = upload.error.orEmpty(),
-                    fontSize = 10.5.sp,
-                    color = scheme.error,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun RemoteFileRow(
     client: RemoteClient,
     file: RemoteFile,
@@ -964,7 +920,7 @@ private fun RemoteFileRow(
     onDelete: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val badge = if (file.isDirectory) "DIR" to Color(0xFF7B9CFF) else fileBadge(file.name)
+    val badge = if (file.isDirectory) FileKind.FOLDER.badge to FileKind.FOLDER.tint else fileBadge(file.name)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1669,35 +1625,11 @@ private fun EmptyCard(title: String, hint: String) {
 }
 
 private fun fileBadge(name: String): Pair<String, Color> {
-    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-    return when (extension) {
-        "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg", "avif" ->
-            "IMG" to Color(0xFFF5A623)
-
-        "mp4", "mkv", "mov", "avi", "webm", "m4v" ->
-            "VID" to Color(0xFFB98CFF)
-
-        "mp3", "wav", "flac", "aac", "ogg", "m4a" ->
-            "AUD" to Color(0xFF38D6C4)
-
-        "pdf", "doc", "docx", "txt", "md", "rtf", "xls", "xlsx", "ppt", "pptx" ->
-            "DOC" to Color(0xFF6C9CFF)
-
-        "zip", "rar", "7z", "tar", "gz" ->
-            "ZIP" to Color(0xFFFF8A8A)
-
-        else -> "FILE" to Color(0xFF98A2B3)
-    }
+    val kind = FileKind.ofFileName(name)
+    return kind.badge to kind.tint
 }
 
 
 /** Как часто обновлять удалённый список без действий пользователя. */
 private const val AUTO_REFRESH_MS = 4_000L
 
-private fun openExternal(context: Context, url: String) {
-    try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    } catch (_: Exception) {
-        Toast.makeText(context, "Нет приложения для ссылки", Toast.LENGTH_SHORT).show()
-    }
-}

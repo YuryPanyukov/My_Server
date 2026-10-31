@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import org.json.JSONObject
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -158,8 +159,10 @@ class RemoteClient(val host: String, val port: Int) {
         openStream: () -> InputStream?,
         onProgress: (sent: Long) -> Unit = {},
         path: String = "",
+        isCancelled: () -> Boolean = { false },
     ) {
         require(size >= 0) { "Неизвестный размер файла" }
+        if (isCancelled()) throw IOException("Отменено")
         val target = "/upload?name=" + encodeSegment(name) + "&path=" + encodePath(path)
         val connection = openConnection(target, "PUT")
         try {
@@ -174,6 +177,9 @@ class RemoteClient(val host: String, val port: Int) {
                     var sent = 0L
                     var lastReported = 0L
                     while (true) {
+                        // Отмена проверяется на каждом блоке: недокачанный файл
+                        // сервер удалит сам, соединение закроет finally.
+                        if (isCancelled()) throw IOException("Отменено")
                         val read = source.read(buffer)
                         if (read < 0) break
                         target.write(buffer, 0, read)
@@ -196,6 +202,34 @@ class RemoteClient(val host: String, val port: Int) {
             connection.inputStream.close()
         } finally {
             connection.disconnect()
+        }
+    }
+
+    /**
+     * Поток файла с хоста: так его можно переслать на другой телефон,
+     * не сохраняя промежуточную копию. `null` — сервер не отдал файл.
+     * Закрытие потока закрывает и соединение.
+     */
+    fun openFile(path: String): InputStream? {
+        val connection = openConnection(filePath(path), "GET")
+        return try {
+            if (connection.responseCode !in 200..299) {
+                connection.disconnect()
+                null
+            } else {
+                object : FilterInputStream(connection.inputStream) {
+                    override fun close() {
+                        try {
+                            super.close()
+                        } finally {
+                            connection.disconnect()
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            connection.disconnect()
+            null
         }
     }
 

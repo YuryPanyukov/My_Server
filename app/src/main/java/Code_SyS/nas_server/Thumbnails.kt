@@ -25,8 +25,8 @@ object Thumbnails {
     /** Превью принятого файла; `null` — тип не медиа или файл битый. */
     fun fromFile(file: File, mimeType: String): ByteArray? = runCatching {
         when {
-            mimeType.startsWith("image/") -> imageFromFile(file)
-            mimeType.startsWith("video/") -> videoFromFile(file)
+            MimeTypes.isImage(mimeType) -> imageFromFile(file)
+            MimeTypes.isVideo(mimeType) -> videoFromFile(file)
             else -> null
         }.let { bitmap -> compress(bitmap) }
     }.getOrNull()
@@ -34,8 +34,8 @@ object Thumbnails {
     /** Превью фото/видео из медиатеки по `content://` адресу. */
     fun fromUri(context: Context, uri: Uri, mimeType: String, mediaId: Long): ByteArray? = runCatching {
         when {
-            mimeType.startsWith("image/") -> imageThumbnail(context, uri, mediaId)
-            mimeType.startsWith("video/") -> videoThumbnail(context, uri, mediaId)
+            MimeTypes.isImage(mimeType) -> imageThumbnail(context, uri, mediaId)
+            MimeTypes.isVideo(mimeType) -> videoThumbnail(context, uri, mediaId)
             else -> null
         }.let { bitmap -> compress(bitmap) }
     }.getOrNull()

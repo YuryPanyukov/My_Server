@@ -1,26 +1,23 @@
 package Code_SyS.nas_server
 
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,7 +25,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,7 +36,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Диалог после «Поделиться»: файлы можно положить в свою папку LanDrop
- * или сразу отправить на недавний телефон.
+ * или отправить на недавний телефон одной очередью с прогрессом.
  */
 @Composable
 internal fun SharedFilesDialog(
@@ -52,10 +48,12 @@ internal fun SharedFilesDialog(
     val scheme = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val hosts = remember { RecentHosts.list(context) }
+    val queue = rememberUploadQueue()
 
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var showHosts by remember { mutableStateOf(false) }
 
     fun saveLocally() {
         if (busy) return
@@ -88,43 +86,40 @@ internal fun SharedFilesDialog(
     }
 
     fun sendTo(target: ShareTarget) {
-        if (busy) return
-        busy = true
+        showHosts = false
         error = null
-        val client = RemoteClient(target.host, target.port)
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    files.forEachIndexed { index, file ->
-                        status = "Отправка ${index + 1} из ${files.size}: ${file.name}"
-                        if (file.size < 0) {
-                            throw IllegalStateException("Не удалось определить размер ${file.name}")
-                        }
-                        client.upload(
-                            name = file.name,
-                            size = file.size,
-                            openStream = { file.openStream(context) },
-                        )
-                    }
-                }
-                RecentHosts.remember(context, target)
-                Toast.makeText(
-                    context,
-                    if (files.size == 1) "Отправлено на ${target.host}" else "Отправлено файлов: ${files.size}",
-                    Toast.LENGTH_SHORT,
-                ).show()
-                busy = false
-                onDismiss()
-            } catch (e: Exception) {
-                busy = false
-                status = null
-                error = e.message ?: "Не удалось отправить файлы"
-            }
+        queue.enqueue(
+            target = target,
+            files = files.map { file ->
+                UploadFile(file.name, file.size) { file.openStream(context) }
+            },
+        )
+    }
+
+    // Отправка закончилась: запоминаем телефон, говорим результат и закрываемся.
+    LaunchedEffect(queue.completed) {
+        val done = queue.completed ?: return@LaunchedEffect
+        val target = queue.target ?: return@LaunchedEffect
+        val sent = done.delivered
+        if (sent > 0) {
+            RecentHosts.remember(context, target)
+            Toast.makeText(
+                context,
+                if (sent == 1) "Отправлено на ${target.host}" else "Отправлено файлов: $sent",
+                Toast.LENGTH_SHORT,
+            ).show()
+            queue.dismiss()
+            onDismiss()
+        } else {
+            error = "Не удалось отправить: неизвестен размер файлов"
+            queue.dismiss()
         }
     }
 
+    val sending = queue.open
+
     AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        onDismissRequest = { if (!busy && !queue.summary.running) onDismiss() },
         title = {
             Text(
                 text = if (files.size == 1) "Отправить файл" else "Отправить файлы",
@@ -146,66 +141,77 @@ internal fun SharedFilesDialog(
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                if (busy) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = scheme.primary,
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = status ?: "Отправляем…",
-                            fontSize = 12.sp,
-                            color = scheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                } else {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    ShareOption(
-                        title = "В папку LanDrop",
-                        subtitle = "Файлы появятся на компьютере в браузере",
-                        onClick = ::saveLocally,
-                    )
-
-                    if (hosts.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text(
-                            text = "НЕДАВНИЕ ТЕЛЕФОНЫ",
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        hosts.forEach { host ->
-                            ShareOption(
-                                title = "${host.host}:${host.port}",
-                                subtitle = "Отправить по Wi-Fi",
-                                onClick = { sendTo(host) },
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                        }
-                    } else {
+                when {
+                    sending -> {
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Телефон-получатель появится здесь после первого подключения по QR.",
-                            fontSize = 11.sp,
-                            color = scheme.onSurfaceVariant,
+                            text = queue.summary.label,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 240.dp)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            for (task in queue.tasks) {
+                                UploadRow(task = task, onCancel = { queue.cancel(task.id) })
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
+                        }
+                        if (!queue.summary.running && queue.summary.failed > 0) {
+                            TextButton(
+                                onClick = { queue.retryFailed() },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp),
+                            ) {
+                                Text("Повторить упавшие (${queue.summary.failed})", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    busy -> {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = scheme.primary,
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = status ?: "Сохраняем…",
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
+                    else -> {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        ShareOption(
+                            title = "В папку LanDrop",
+                            subtitle = "Файлы появятся на компьютере в браузере",
+                            onClick = ::saveLocally,
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        ShareOption(
+                            title = "На недавний телефон",
+                            subtitle = if (hosts.isEmpty()) {
+                                "Появится после первого подключения по QR"
+                            } else {
+                                "Отправить по Wi-Fi"
+                            },
+                            onClick = { if (hosts.isNotEmpty()) showHosts = true },
                         )
                     }
                 }
 
                 error?.let { message ->
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = message,
-                        fontSize = 11.5.sp,
-                        color = scheme.error,
-                    )
+                    Text(text = message, fontSize = 11.5.sp, color = scheme.error)
                 }
             }
         },
@@ -213,46 +219,19 @@ internal fun SharedFilesDialog(
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
-                enabled = !busy,
+                enabled = !busy && !queue.summary.running,
             ) {
-                Text(if (busy) "Отправка…" else "Отмена")
+                Text(if (busy || queue.summary.running) "Отправка…" else "Отмена")
             }
         },
     )
-}
 
-@Composable
-private fun ShareOption(title: String, subtitle: String, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Surface(
-        shape = RoundedCornerShape(13.dp),
-        color = scheme.surfaceVariant.copy(alpha = .45f),
-        border = BorderStroke(1.dp, scheme.outline.copy(alpha = .55f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(13.dp))
-            .clickable(onClick = onClick),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(scheme.primary.copy(alpha = .14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("↑", fontSize = 14.sp, color = scheme.primary)
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                Text(subtitle, fontSize = 10.5.sp, color = scheme.onSurfaceVariant)
-            }
-            Text("›", fontSize = 18.sp, color = scheme.onSurfaceVariant)
-        }
+    if (showHosts) {
+        HostPickerDialog(
+            title = "Отправить на телефон",
+            hosts = hosts,
+            onPick = ::sendTo,
+            onDismiss = { showHosts = false },
+        )
     }
 }
-

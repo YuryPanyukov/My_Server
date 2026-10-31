@@ -44,8 +44,8 @@ object GallerySaver {
         if (!canPublish() || !file.isFile) return null
 
         val mime = MimeTypes.forFileName(file.name)
-        val isImage = mime.startsWith("image/")
-        val isVideo = mime.startsWith("video/")
+        val isImage = MimeTypes.isImage(mime)
+        val isVideo = MimeTypes.isVideo(mime)
         if (!isImage && !isVideo) return null
 
         val resolver = context.contentResolver
