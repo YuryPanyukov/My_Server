@@ -1,6 +1,7 @@
 package Code_SyS.nas_server
 
 import android.content.Context
+import androidx.core.content.edit
 
 /**
  * Недавние телефоны, к которым подключались по QR.
@@ -25,16 +26,12 @@ object RecentHosts {
     fun remember(context: Context, target: ShareTarget) {
         val updated = (listOf(target) + list(context).filter { it != target }).take(MAX)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY, RecentHostsCodec.encode(updated))
-            .apply()
+            .edit { putString(KEY, RecentHostsCodec.encode(updated)) }
     }
 
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(KEY)
-            .apply()
+            .edit { remove(KEY) }
     }
 }
 

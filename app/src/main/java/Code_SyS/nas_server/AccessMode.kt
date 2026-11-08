@@ -1,6 +1,7 @@
 package Code_SyS.nas_server
 
 import android.content.Context
+import androidx.core.content.edit
 import java.io.File
 import java.io.InputStream
 import java.util.Calendar
@@ -230,8 +231,6 @@ object AccessModeStore {
     fun set(context: Context, mode: AccessMode) {
         AccessModeState.current = mode
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY, AccessModeCodec.encode(mode))
-            .apply()
+            .edit { putString(KEY, AccessModeCodec.encode(mode)) }
     }
 }

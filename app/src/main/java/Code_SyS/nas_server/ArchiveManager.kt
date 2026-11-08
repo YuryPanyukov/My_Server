@@ -2,6 +2,7 @@ package Code_SyS.nas_server
 
 import android.content.Context
 import android.util.Log
+import androidx.core.content.edit
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.Executors
@@ -60,12 +61,11 @@ object ArchiveManager {
     }
 
     fun saveConfig(context: Context, config: WebDavConfig) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_URL, config.baseUrl.trim())
-            .putString(KEY_USER, config.username)
-            .putString(KEY_PASSWORD, config.password)
-            .apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+            putString(KEY_URL, config.baseUrl.trim())
+            putString(KEY_USER, config.username)
+            putString(KEY_PASSWORD, config.password)
+        }
     }
 
     fun isConfigured(context: Context): Boolean = config(context).isComplete()
@@ -224,7 +224,10 @@ object ArchiveManager {
         }
         records = records.map {
             if (it.status == VaultRecord.Status.QUEUED && it.sourcePath.isEmpty()) {
-                it.copy(status = VaultRecord.Status.ERROR, lastError = "Источник недоступен после перезапуска")
+                it.copy(
+                    status = VaultRecord.Status.ERROR,
+                    lastError = context.getString(R.string.vault_error_source_lost),
+                )
             } else {
                 it
             }
@@ -254,12 +257,12 @@ object ArchiveManager {
 
             val webDavConfig = config(context)
             if (!webDavConfig.isComplete()) {
-                fail(context, record, "Хранилище не настроено: укажите адрес в разделе «Хранилище»")
+                fail(context, record, context.getString(R.string.vault_error_no_config))
                 continue
             }
 
             val opener = openSource(context, job) ?: run {
-                fail(context, record, "Файл недоступен: источник пропал")
+                fail(context, record, context.getString(R.string.vault_error_source_gone))
                 continue
             }
 
@@ -276,7 +279,7 @@ object ArchiveManager {
 
             result.fold(
                 onSuccess = { complete(context, record) },
-                onFailure = { error -> fail(context, record, VaultErrors.describe(error)) },
+                onFailure = { error -> fail(context, record, VaultErrors.describe(context, error)) },
             )
         }
     }

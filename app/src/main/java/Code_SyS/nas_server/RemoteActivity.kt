@@ -114,7 +114,7 @@ class RemoteActivity : ComponentActivity() {
 
         target = ShareLinks.parseDeepLink(intent?.dataString)
         if (target == null) {
-            Toast.makeText(this, "Ссылка не содержит адрес LanDrop", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.remote_bad_link), Toast.LENGTH_SHORT).show()
             finish()
             return
         }
@@ -161,6 +161,7 @@ private data class ViewerState(val items: List<RemoteMediaItem>, val index: Int)
 @Composable
 private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val scheme = MaterialTheme.colorScheme
     val client = remember(target.host, target.port) { RemoteClient(target.host, target.port) }
     val scope = rememberCoroutineScope()
@@ -209,7 +210,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                 RecentHosts.remember(context, target)
             }
         } catch (e: Exception) {
-            loadError = e.message ?: "Сервер недоступен"
+            loadError = e.message ?: resources.getString(R.string.remote_server_unavailable)
         } finally {
             refreshing = false
             refreshLock.unlock()
@@ -271,7 +272,11 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                 uris.mapNotNull { uri -> SharedFile.read(context, uri) }
             }
             if (sharedFiles.isEmpty()) {
-                Toast.makeText(context, "Не удалось прочитать файлы", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    resources.getString(R.string.remote_read_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
                 return@launch
             }
             // Файл без известного размера сервер не примет — очередь покажет
@@ -288,7 +293,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
 
     sendTargets?.let { chosen ->
         HostPickerDialog(
-            title = "Отправить на телефон",
+            title = androidx.compose.ui.res.stringResource(R.string.send_to_phone_title),
             hosts = otherHosts,
             onPick = { destination ->
                 sendTargets = null
@@ -312,9 +317,15 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
             title = {
                 Text(
                     when {
-                        targets.size == 1 && targets.first().isDirectory -> "Удалить папку на телефоне?"
-                        targets.size == 1 -> "Удалить файл на телефоне?"
-                        else -> "Удалить ${targets.size} элементов на телефоне?"
+                        targets.size == 1 && targets.first().isDirectory ->
+                            androidx.compose.ui.res.stringResource(R.string.remote_delete_folder_title)
+                        targets.size == 1 ->
+                            androidx.compose.ui.res.stringResource(R.string.remote_delete_file_title)
+                        else -> androidx.compose.ui.res.pluralStringResource(
+                            R.plurals.remote_delete_items_title,
+                            targets.size,
+                            targets.size,
+                        )
                     }
                 )
             },
@@ -323,8 +334,8 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                     when {
                         targets.size == 1 -> targets.first().name
                         targets.any { it.isDirectory } ->
-                            "Выбранные файлы и папки будут удалены на телефоне-хосте. Содержимое папок тоже удалится."
-                        else -> "Выбранные файлы будут удалены на телефоне-хосте."
+                            androidx.compose.ui.res.stringResource(R.string.remote_delete_folder_body)
+                        else -> androidx.compose.ui.res.stringResource(R.string.remote_delete_files_body)
                     }
                 )
             },
@@ -347,17 +358,19 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                         refresh(showSpinner = false)
                         if (failed > 0) {
                             val message = if (failed == 1) {
-                                firstError ?: "Не удалось удалить файл"
+                                firstError ?: resources.getString(R.string.delete_error_single)
                             } else {
-                                "Не удалось удалить файлов: $failed"
+                                resources.getQuantityString(R.plurals.delete_error_plural, failed, failed)
                             }
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
                     }
-                }) { Text("Удалить") }
+                }) { Text(androidx.compose.ui.res.stringResource(R.string.delete_action)) }
             },
             dismissButton = {
-                TextButton(onClick = { filesToDelete = emptyList() }) { Text("Отмена") }
+                TextButton(onClick = { filesToDelete = emptyList() }) {
+                    Text(androidx.compose.ui.res.stringResource(R.string.cancel_button))
+                }
             },
         )
     }
@@ -366,12 +379,17 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
         var folderName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreateFolder = false },
-            title = { Text("Новая папка") },
+            title = { Text(androidx.compose.ui.res.stringResource(R.string.create_folder)) },
             text = {
                 OutlinedTextField(
                     value = folderName,
                     onValueChange = { folderName = it },
-                    placeholder = { Text("Например, Отпуск", fontSize = 14.sp) },
+                    placeholder = {
+                        Text(
+                            androidx.compose.ui.res.stringResource(R.string.create_folder_example),
+                            fontSize = 14.sp,
+                        )
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -390,15 +408,21 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                             if (created) {
                                 refresh(showSpinner = false)
                             } else {
-                                Toast.makeText(context, "Не удалось создать папку", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    resources.getString(R.string.create_error),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
                             }
                         }
                     },
                     enabled = folderName.isNotBlank(),
-                ) { Text("Создать") }
+                ) { Text(androidx.compose.ui.res.stringResource(R.string.create_button)) }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateFolder = false }) { Text("Отмена") }
+                TextButton(onClick = { showCreateFolder = false }) {
+                    Text(androidx.compose.ui.res.stringResource(R.string.cancel_button))
+                }
             },
         )
     }
@@ -418,7 +442,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                     if (!renamed) {
                         Toast.makeText(
                             context,
-                            "Не удалось переименовать: имя занято или недопустимо",
+                            resources.getString(R.string.rename_error),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -456,8 +480,11 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                         if (failed > 0) {
                             Toast.makeText(
                                 context,
-                                if (failed == 1) "Не удалось переместить элемент"
-                                else "Не удалось переместить: $failed",
+                                if (failed == 1) {
+                                    resources.getString(R.string.toast_move_error_single)
+                                } else {
+                                    resources.getString(R.string.toast_move_error_plural, failed)
+                                },
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
@@ -505,12 +532,15 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Просмотр по Wi-Fi",
+                    text = androidx.compose.ui.res.stringResource(R.string.remote_title),
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "${target.host}:${target.port} · удалённый телефон",
+                    text = androidx.compose.ui.res.stringResource(
+                        R.string.remote_subtitle,
+                        "${target.host}:${target.port}",
+                    ),
                     fontSize = 11.5.sp,
                     color = scheme.onSurfaceVariant,
                     maxLines = 1,
@@ -586,7 +616,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                             if (folders == null) {
                                 Toast.makeText(
                                     context,
-                                    "Не удалось получить список папок",
+                                    resources.getString(R.string.remote_folders_error),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             } else {
@@ -623,7 +653,7 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                 border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Браузер", fontSize = 13.sp)
+                Text(androidx.compose.ui.res.stringResource(R.string.remote_open_browser), fontSize = 13.sp)
             }
             Button(
                 onClick = {
@@ -631,7 +661,11 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                         uploadTarget = currentPath
                         picker.launch(arrayOf("*/*"))
                     } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(context, "Нет выбора файлов", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            resources.getString(R.string.remote_no_picker),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 },
                 shape = RoundedCornerShape(12.dp),
@@ -641,7 +675,11 @@ private fun RemoteScreen(target: ShareTarget, onClose: () -> Unit) {
                 ),
                 modifier = Modifier.weight(1.4f),
             ) {
-                Text("Отправить файлы", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    androidx.compose.ui.res.stringResource(R.string.send_files),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
         Spacer(modifier = Modifier.height(10.dp))
@@ -659,13 +697,14 @@ private fun TabSwitcher(tab: RemoteTab, filesCount: Int, onSelect: (RemoteTab) -
             .padding(4.dp)
     ) {
         TabPill(
-            text = "Файлы" + if (filesCount > 0) " · $filesCount" else "",
+            text = androidx.compose.ui.res.stringResource(R.string.remote_tab_files) +
+                if (filesCount > 0) " · $filesCount" else "",
             selected = tab == RemoteTab.FILES,
             modifier = Modifier.weight(1f),
             onClick = { onSelect(RemoteTab.FILES) },
         )
         TabPill(
-            text = "Галерея",
+            text = androidx.compose.ui.res.stringResource(R.string.gallery),
             selected = tab == RemoteTab.GALLERY,
             modifier = Modifier.weight(1f),
             onClick = { onSelect(RemoteTab.GALLERY) },
@@ -748,7 +787,10 @@ private fun FilesTab(
         if (selectionMode) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Выбрано ${selectedFiles.size}",
+                    text = androidx.compose.ui.res.stringResource(
+                        R.string.selected_count,
+                        selectedFiles.size,
+                    ),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -756,10 +798,17 @@ private fun FilesTab(
                 TextButton(onClick = {
                     selected = if (allSelected) emptySet() else visible.map { it.path }.toSet()
                 }) {
-                    Text(if (allSelected) "Снять" else "Все", fontSize = 12.sp)
+                    Text(
+                        if (allSelected) {
+                            androidx.compose.ui.res.stringResource(R.string.deselect_all)
+                        } else {
+                            androidx.compose.ui.res.stringResource(R.string.select_all)
+                        },
+                        fontSize = 12.sp,
+                    )
                 }
                 TextButton(onClick = { clearSelection() }) {
-                    Text("Отмена", fontSize = 12.sp)
+                    Text(androidx.compose.ui.res.stringResource(R.string.cancel_button), fontSize = 12.sp)
                 }
             }
             Row(
@@ -777,7 +826,7 @@ private fun FilesTab(
                     border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Переместить", fontSize = 12.sp)
+                    Text(androidx.compose.ui.res.stringResource(R.string.move_action), fontSize = 12.sp)
                 }
                 Button(
                     onClick = {
@@ -794,7 +843,11 @@ private fun FilesTab(
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
-                        text = if (selectedFiles.size == 1) "Удалить файл" else "Удалить выбранные",
+                        text = if (selectedFiles.size == 1) {
+                            androidx.compose.ui.res.stringResource(R.string.remote_delete_file)
+                        } else {
+                            androidx.compose.ui.res.stringResource(R.string.remote_delete_selected)
+                        },
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -815,7 +868,10 @@ private fun FilesTab(
                     border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Отправить на телефон", fontSize = 12.sp)
+                    Text(
+                        androidx.compose.ui.res.stringResource(R.string.send_to_phone_action),
+                        fontSize = 12.sp,
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -828,7 +884,12 @@ private fun FilesTab(
                     TextButton(
                         onClick = onNavigateUp,
                         contentPadding = PaddingValues(horizontal = 4.dp),
-                    ) { Text("← Назад", fontSize = 12.sp) }
+                    ) {
+                        Text(
+                            androidx.compose.ui.res.stringResource(R.string.back_button),
+                            fontSize = 12.sp,
+                        )
+                    }
                     Text(
                         text = currentPath,
                         fontSize = 11.5.sp,
@@ -843,12 +904,22 @@ private fun FilesTab(
                 TextButton(
                     onClick = onCreateFolder,
                     contentPadding = PaddingValues(horizontal = 6.dp),
-                ) { Text("＋ Папка", fontSize = 12.sp) }
+                ) {
+                    Text(
+                        androidx.compose.ui.res.stringResource(R.string.add_folder),
+                        fontSize = 12.sp,
+                    )
+                }
             }
             OutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
-                placeholder = { Text("Поиск по файлам и папкам", fontSize = 14.sp) },
+                placeholder = {
+                    Text(
+                        androidx.compose.ui.res.stringResource(R.string.search_placeholder),
+                        fontSize = 14.sp,
+                    )
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -873,15 +944,18 @@ private fun FilesTab(
                     item {
                         EmptyCard(
                             title = when {
-                                files.isEmpty() && currentPath.isEmpty() -> "На телефоне пока нет файлов"
-                                files.isEmpty() -> "Папка пуста"
-                                else -> "Ничего не найдено"
+                                files.isEmpty() && currentPath.isEmpty() ->
+                                    androidx.compose.ui.res.stringResource(R.string.remote_no_files)
+                                files.isEmpty() ->
+                                    androidx.compose.ui.res.stringResource(R.string.folder_empty)
+                                else -> androidx.compose.ui.res.stringResource(R.string.nothing_found)
                             },
                             hint = when {
                                 files.isEmpty() && currentPath.isEmpty() ->
-                                    "Отправьте файл кнопкой ниже — он появится в этом списке"
-                                files.isEmpty() -> "Отправьте файл кнопкой ниже — он попадёт в эту папку"
-                                else -> "Измените запрос в поиске"
+                                    androidx.compose.ui.res.stringResource(R.string.remote_drop_hint)
+                                files.isEmpty() ->
+                                    androidx.compose.ui.res.stringResource(R.string.remote_upload_hint)
+                                else -> androidx.compose.ui.res.stringResource(R.string.change_query)
                             },
                         )
                     }
@@ -974,9 +1048,9 @@ private fun RemoteFileRow(
             )
             Text(
                 text = if (file.isDirectory) {
-                    "Папка"
+                    androidx.compose.ui.res.stringResource(R.string.folder_label)
                 } else {
-                    "${FileFormat.size(file.size)} · ${FileFormat.date(file.modified)}"
+                    "${FileFormat.size(androidx.compose.ui.platform.LocalResources.current, file.size)} · ${FileFormat.date(file.modified)}"
                 },
                 fontSize = 11.5.sp,
                 color = scheme.onSurfaceVariant,
@@ -1006,7 +1080,11 @@ private fun RemoteFileRow(
                 onClick = onDelete,
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
             ) {
-                Text("Удалить", fontSize = 11.5.sp, color = scheme.onSurfaceVariant)
+                Text(
+                    androidx.compose.ui.res.stringResource(R.string.delete_action),
+                    fontSize = 11.5.sp,
+                    color = scheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -1025,12 +1103,23 @@ private fun RemoteRenameDialog(
     val trimmed = name.trim()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isDirectory) "Переименовать папку" else "Переименовать файл") },
+        title = {
+            Text(
+                androidx.compose.ui.res.stringResource(
+                    if (isDirectory) R.string.rename_folder else R.string.rename_file
+                )
+            )
+        },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Имя", fontSize = 12.sp) },
+                label = {
+                    Text(
+                        androidx.compose.ui.res.stringResource(R.string.name_label),
+                        fontSize = 12.sp,
+                    )
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -1040,10 +1129,12 @@ private fun RemoteRenameDialog(
             TextButton(
                 onClick = { onRename(trimmed) },
                 enabled = trimmed.isNotEmpty() && trimmed != currentName,
-            ) { Text("Сохранить") }
+            ) { Text(androidx.compose.ui.res.stringResource(R.string.save_button)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = onDismiss) {
+                Text(androidx.compose.ui.res.stringResource(R.string.cancel_button))
+            }
         },
     )
 }
@@ -1059,11 +1150,15 @@ private fun RemoteMoveDialog(
     var target by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Переместить") },
+        title = { Text(androidx.compose.ui.res.stringResource(R.string.move_title)) },
         text = {
             Column {
                 Text(
-                    text = if (count == 1) "1 элемент" else "Элементов: $count",
+                    text = if (count == 1) {
+                        androidx.compose.ui.res.stringResource(R.string.move_item_single)
+                    } else {
+                        androidx.compose.ui.res.stringResource(R.string.move_items_plural, count)
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1071,7 +1166,7 @@ private fun RemoteMoveDialog(
                 LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                     item {
                         RemoteMoveTargetRow(
-                            label = "Все файлы (корень)",
+                            label = androidx.compose.ui.res.stringResource(R.string.move_root),
                             selected = target.isEmpty(),
                             onClick = { target = "" },
                         )
@@ -1088,11 +1183,13 @@ private fun RemoteMoveDialog(
         },
         confirmButton = {
             TextButton(onClick = { onMove(target) }, enabled = count > 0) {
-                Text("Переместить")
+                Text(androidx.compose.ui.res.stringResource(R.string.move_button))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = onDismiss) {
+                Text(androidx.compose.ui.res.stringResource(R.string.cancel_button))
+            }
         },
     )
 }
@@ -1147,9 +1244,20 @@ private fun GalleryTab(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                SourceChip("Все", selectedSource == null) { onSelectSource(null) }
+                SourceChip(
+                    androidx.compose.ui.res.stringResource(R.string.remote_source_all),
+                    selectedSource == null,
+                ) { onSelectSource(null) }
                 for (source in galleries) {
-                    SourceChip(source.title, selectedSource == source.key) { onSelectSource(source.key) }
+                    // У известных источников подпись из ресурсов: язык выбирает
+                    // зритель, а не телефон-хост. Незнакомый источник — как прислали.
+                    val label = when (source.key) {
+                        "received" -> androidx.compose.ui.res.stringResource(R.string.media_source_received)
+                        HttpRequestHandler.DEVICE_SOURCE_KEY ->
+                            androidx.compose.ui.res.stringResource(R.string.media_source_device)
+                        else -> source.title
+                    }
+                    SourceChip(label, selectedSource == source.key) { onSelectSource(source.key) }
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -1157,8 +1265,8 @@ private fun GalleryTab(
 
         if (items.isEmpty()) {
             EmptyCard(
-                title = "Галерея пуста",
-                hint = "Разрешите на том телефоне доступ к фото и видео или добавьте файлы",
+                title = androidx.compose.ui.res.stringResource(R.string.remote_gallery_empty),
+                hint = androidx.compose.ui.res.stringResource(R.string.remote_gallery_hint),
             )
             return
         }
@@ -1263,11 +1371,12 @@ private fun RemoteViewer(
     val scope = rememberCoroutineScope()
     val current = state.items.getOrNull(pagerState.currentPage) ?: state.items.first()
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
 
     // Сохранение идёт в системные «Загрузки»: на Android 10+ через MediaStore
     // без разрешений, на старых версиях — после запроса WRITE_EXTERNAL_STORAGE.
     var savingId by remember { mutableStateOf<String?>(null) }
-    var saveProgress by remember { mutableStateOf(-1f) }
+    var saveProgress by remember { androidx.compose.runtime.mutableFloatStateOf(-1f) }
     var pendingSave by remember { mutableStateOf<RemoteMediaItem?>(null) }
 
     fun save(item: RemoteMediaItem) {
@@ -1283,7 +1392,11 @@ private fun RemoteViewer(
             savingId = null
             Toast.makeText(
                 context,
-                if (saved != null) "Сохранено в Загрузки" else "Не удалось сохранить файл",
+                if (saved != null) {
+                    resources.getString(R.string.remote_saved_downloads)
+                } else {
+                    resources.getString(R.string.remote_save_error)
+                },
                 Toast.LENGTH_SHORT,
             ).show()
         }
@@ -1297,7 +1410,11 @@ private fun RemoteViewer(
         if (granted && item != null) {
             save(item)
         } else if (item != null) {
-            Toast.makeText(context, "Нужен доступ к памяти", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                resources.getString(R.string.remote_storage_permission),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
@@ -1375,7 +1492,10 @@ private fun RemoteViewer(
                                 contentColor = Color(0xFF0A0C11),
                             ),
                         ) {
-                            Text("Открыть в браузере", fontSize = 12.5.sp)
+                            Text(
+                                androidx.compose.ui.res.stringResource(R.string.remote_open_in_browser),
+                                fontSize = 12.5.sp,
+                            )
                         }
                     }
                 }
@@ -1420,15 +1540,22 @@ private fun RemoteViewer(
                         onClick = { requestSave(current) },
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
                     ) {
-                        Text("Сохранить", fontSize = 11.5.sp, color = Color.White)
+                        Text(
+                            androidx.compose.ui.res.stringResource(R.string.save_button),
+                            fontSize = 11.5.sp,
+                            color = Color.White,
+                        )
                     }
                 } else {
                     // Пока файл едет, кнопку заменяет прогресс.
                     Text(
                         text = if (saveProgress < 0f) {
-                            "Сохраняю…"
+                            androidx.compose.ui.res.stringResource(R.string.remote_saving)
                         } else {
-                            "Сохраняю ${(saveProgress * 100).toInt()}%"
+                            androidx.compose.ui.res.stringResource(
+                                R.string.remote_saving_percent,
+                                (saveProgress * 100).toInt(),
+                            )
                         },
                         fontSize = 11.5.sp,
                         color = Color.White.copy(alpha = .8f),
@@ -1437,7 +1564,11 @@ private fun RemoteViewer(
                 }
                 if (current.kind != "image") {
                     TextButton(onClick = { onExternal(current) }) {
-                        Text("В браузере", fontSize = 11.5.sp, color = Color.White)
+                        Text(
+                            androidx.compose.ui.res.stringResource(R.string.remote_in_browser),
+                            fontSize = 11.5.sp,
+                            color = Color.White,
+                        )
                     }
                 }
             }
@@ -1583,7 +1714,7 @@ private fun ErrorCard(message: String, onRetry: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "Нет связи с телефоном",
+                text = androidx.compose.ui.res.stringResource(R.string.remote_no_connection),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = scheme.error,
@@ -1595,7 +1726,7 @@ private fun ErrorCard(message: String, onRetry: () -> Unit) {
                 modifier = Modifier.padding(top = 3.dp),
             )
             TextButton(onClick = onRetry, contentPadding = PaddingValues(0.dp)) {
-                Text("Повторить", fontSize = 12.sp)
+                Text(androidx.compose.ui.res.stringResource(R.string.retry), fontSize = 12.sp)
             }
         }
     }

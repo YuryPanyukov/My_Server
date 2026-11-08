@@ -98,16 +98,31 @@ class VaultStoreTest {
     }
 
     @Test
-    fun `vault errors map to readable hints`() {
-        assertTrue(
-            VaultErrors.describe(WebDavHttpException(401, "http://lan"))
-                .startsWith("Хранилище не пустило")
-        )
-        assertTrue(VaultErrors.describe(WebDavHttpException(507, "http://lan")).contains("места"))
-        assertTrue(VaultErrors.describe(java.io.IOException("reset")).startsWith("Нет связи"))
+    fun `vault errors are classified by kind`() {
+        // Подписи живут в строковых ресурсах, поэтому тест проверяет разбор:
+        // 401 — доступ, 507 — место, обрыв — сеть, прочие HTTP — код ответа.
         assertEquals(
-            "Неизвестная ошибка",
-            VaultErrors.describe(IllegalStateException(null as Throwable?)),
+            VaultFailure.AUTH,
+            VaultErrors.classify(WebDavHttpException(401, "http://lan")).failure,
+        )
+        assertEquals(
+            VaultFailure.NO_SPACE,
+            VaultErrors.classify(WebDavHttpException(507, "http://lan")).failure,
+        )
+        assertEquals(
+            VaultFailure.NO_CONNECTION,
+            VaultErrors.classify(java.io.IOException("reset")).failure,
+        )
+        assertEquals("reset", VaultErrors.classify(java.io.IOException("reset")).detail)
+        // 413 — «файл больше»; незнакомый статус сохраняет код для подписи.
+        assertEquals(
+            VaultFailure.TOO_LARGE,
+            VaultErrors.classify(WebDavHttpException(413, "http://lan")).failure,
+        )
+        assertEquals(500, VaultErrors.classify(WebDavHttpException(500, "http://lan")).code)
+        assertEquals(
+            VaultFailure.UNKNOWN,
+            VaultErrors.classify(IllegalStateException(null as Throwable?)).failure,
         )
     }
 }

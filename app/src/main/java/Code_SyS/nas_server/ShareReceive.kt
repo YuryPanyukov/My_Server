@@ -26,6 +26,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +48,7 @@ internal fun SharedFilesDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scheme = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val hosts = remember { RecentHosts.list(context) }
@@ -59,7 +63,7 @@ internal fun SharedFilesDialog(
         if (busy) return
         busy = true
         error = null
-        status = "Сохраняем файлы…"
+        status = resources.getString(R.string.saving_files)
         scope.launch {
             val saved = withContext(Dispatchers.IO) {
                 files.mapNotNull { it.saveTo(context, saver) }
@@ -72,13 +76,17 @@ internal fun SharedFilesDialog(
             }
             busy = false
             if (saved.isEmpty()) {
-                error = "Не удалось сохранить файлы"
+                error = resources.getString(R.string.save_files_error)
                 status = null
                 return@launch
             }
             Toast.makeText(
                 context,
-                if (saved.size == 1) "Сохранено: ${saved.first().name}" else "Сохранено файлов: ${saved.size}",
+                if (saved.size == 1) {
+                    resources.getString(R.string.saved_single, saved.first().name)
+                } else {
+                    resources.getQuantityString(R.plurals.saved_plural, saved.size, saved.size)
+                },
                 Toast.LENGTH_SHORT,
             ).show()
             onDismiss()
@@ -105,13 +113,17 @@ internal fun SharedFilesDialog(
             RecentHosts.remember(context, target)
             Toast.makeText(
                 context,
-                if (sent == 1) "Отправлено на ${target.host}" else "Отправлено файлов: $sent",
+                if (sent == 1) {
+                    resources.getString(R.string.send_single, target.host)
+                } else {
+                    resources.getQuantityString(R.plurals.send_plural, sent, sent)
+                },
                 Toast.LENGTH_SHORT,
             ).show()
             queue.dismiss()
             onDismiss()
         } else {
-            error = "Не удалось отправить: неизвестен размер файлов"
+            error = resources.getString(R.string.send_error_unknown_size)
             queue.dismiss()
         }
     }
@@ -122,7 +134,11 @@ internal fun SharedFilesDialog(
         onDismissRequest = { if (!busy && !queue.summary.running) onDismiss() },
         title = {
             Text(
-                text = if (files.size == 1) "Отправить файл" else "Отправить файлы",
+                text = if (files.size == 1) {
+                    stringResource(R.string.send_file)
+                } else {
+                    stringResource(R.string.send_files)
+                },
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -133,7 +149,9 @@ internal fun SharedFilesDialog(
                     text = if (files.size == 1) {
                         files.first().name
                     } else {
-                        "Файлов: ${files.size} · ${files.first().name} и ещё ${files.size - 1}"
+                        pluralStringResource(R.plurals.files_count, files.size, files.size) +
+                            " · " + files.first().name + " " +
+                            pluralStringResource(R.plurals.and_more, files.size - 1, files.size - 1)
                     },
                     fontSize = 12.5.sp,
                     color = scheme.onSurfaceVariant,
@@ -145,7 +163,7 @@ internal fun SharedFilesDialog(
                     sending -> {
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = queue.summary.label,
+                            text = uploadProgressLabel(queue.summary),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                         )
@@ -165,7 +183,10 @@ internal fun SharedFilesDialog(
                                 onClick = { queue.retryFailed() },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp),
                             ) {
-                                Text("Повторить упавшие (${queue.summary.failed})", fontSize = 12.sp)
+                                Text(
+                                    stringResource(R.string.upload_retry_failed, queue.summary.failed),
+                                    fontSize = 12.sp,
+                                )
                             }
                         }
                     }
@@ -180,7 +201,7 @@ internal fun SharedFilesDialog(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = status ?: "Сохраняем…",
+                                text = status ?: stringResource(R.string.saving),
                                 fontSize = 12.sp,
                                 color = scheme.onSurfaceVariant,
                                 maxLines = 2,
@@ -192,17 +213,17 @@ internal fun SharedFilesDialog(
                     else -> {
                         Spacer(modifier = Modifier.height(14.dp))
                         ShareOption(
-                            title = "В папку LanDrop",
-                            subtitle = "Файлы появятся на компьютере в браузере",
+                            title = stringResource(R.string.share_save_title),
+                            subtitle = stringResource(R.string.share_save_desc),
                             onClick = ::saveLocally,
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         ShareOption(
-                            title = "На недавний телефон",
+                            title = stringResource(R.string.send_to_phone),
                             subtitle = if (hosts.isEmpty()) {
-                                "Появится после первого подключения по QR"
+                                stringResource(R.string.send_to_phone_desc)
                             } else {
-                                "Отправить по Wi-Fi"
+                                stringResource(R.string.send_wifi)
                             },
                             onClick = { if (hosts.isNotEmpty()) showHosts = true },
                         )
@@ -221,14 +242,20 @@ internal fun SharedFilesDialog(
                 onClick = onDismiss,
                 enabled = !busy && !queue.summary.running,
             ) {
-                Text(if (busy || queue.summary.running) "Отправка…" else "Отмена")
+                Text(
+                    if (busy || queue.summary.running) {
+                        stringResource(R.string.sending)
+                    } else {
+                        stringResource(R.string.cancel_button)
+                    }
+                )
             }
         },
     )
 
     if (showHosts) {
         HostPickerDialog(
-            title = "Отправить на телефон",
+            title = stringResource(R.string.send_to_phone_title),
             hosts = hosts,
             onPick = ::sendTo,
             onDismiss = { showHosts = false },

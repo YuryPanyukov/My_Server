@@ -159,12 +159,8 @@ class FileReceiverService : Service() {
     }
 
     private fun stopForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        // stopForeground(int) появился в API 24, а minSdk приложения — 24.
+        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     override fun onDestroy() {
@@ -200,7 +196,7 @@ class FileReceiverService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("Сервер запущен на порту ${Protocol.PORT}")
+            .setContentText(getString(R.string.notification_server_running, Protocol.PORT))
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .setContentIntent(pendingIntent)

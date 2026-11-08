@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -26,6 +25,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.core.net.toUri
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -45,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -194,12 +197,38 @@ fun FileReceiverScreen(
     onSharedHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    // Ресурсы читаем через Compose: иначе смена конфигурации (язык) оставляет
+    // в колбэках устаревшие строки, на что и ругается lint.
+    val resources = LocalResources.current
+
+    // Строки читаются один раз в композабельной области: внутри лямбд и
+    // LaunchedEffect stringResource вызвать нельзя.
+    val browserLabelText = stringResource(R.string.browser_label)
+    val galleryLabelText = stringResource(R.string.gallery_label)
+    val statusRunningText = stringResource(R.string.status_running)
+    val statusStoppedText = stringResource(R.string.status_stopped)
+    val statusHintRunningText = stringResource(R.string.status_hint_running)
+    val statusHintStoppedText = stringResource(R.string.status_hint_stopped)
+    val ipLabelText = stringResource(R.string.ip_label)
+    val ipUnavailableText = stringResource(R.string.ip_unavailable)
+    val ipNoWifiText = stringResource(R.string.no_wifi)
+    val errorIpResolveText = stringResource(R.string.error_ip_resolve)
+    val errorNoWifiText = stringResource(R.string.error_no_wifi)
+    val toastVaultOpenError = stringResource(R.string.toast_vault_open_error)
+    val toastCameraOpenError = stringResource(R.string.toast_camera_open_error)
+    val toastConfirmOpenError = stringResource(R.string.toast_confirm_open_error)
+    val toastCreateError = stringResource(R.string.create_error)
+    val toastRenameError = stringResource(R.string.rename_error)
+    val toastMoveErrorSingle = stringResource(R.string.toast_move_error_single)
+    val undoLabel = stringResource(R.string.undo)
+    val deleteActionLabel = stringResource(R.string.delete_action)
+    val cancelButtonLabel = stringResource(R.string.cancel_button)
 
     var isServiceRunning by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("Статус: остановлен") }
-    var ipText by remember { mutableStateOf("IP: —") }
-    var httpUrlText by remember { mutableStateOf("Браузер: —") }
-    var galleryUrlText by remember { mutableStateOf("Галерея: —") }
+    var statusText by remember { mutableStateOf(statusStoppedText) }
+    var ipText by remember { mutableStateOf(ipLabelText + " —") }
+    var httpUrlText by remember { mutableStateOf(browserLabelText + " —") }
+    var galleryUrlText by remember { mutableStateOf(galleryLabelText + " —") }
     var mediaAccess by remember { mutableStateOf(MainActivity.hasMediaAccess(context)) }
     var cameraAccess by remember { mutableStateOf(MainActivity.hasCameraAccess(context)) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -256,16 +285,18 @@ fun FileReceiverScreen(
     }
 
     // IP читается один раз при создании экрана
+
+
     LaunchedEffect(Unit) {
         val ip = NetworkUtils.getWifiIpAddress(context)
-        ipText = "IP: ${ip ?: "недоступен"}"
-        httpUrlText = if (ip != null) "Браузер: http://$ip:${Protocol.PORT}" else "Браузер: —"
-        galleryUrlText = if (ip != null) "Галерея: http://$ip:${Protocol.PORT}/gallery" else "Галерея: —"
+        ipText = ipLabelText + " ${ip ?: ipUnavailableText}"
+        httpUrlText = if (ip != null) browserLabelText + " http://$ip:${Protocol.PORT}" else browserLabelText + " —"
+        galleryUrlText = if (ip != null) galleryLabelText + " http://$ip:${Protocol.PORT}/gallery" else galleryLabelText + " —"
     }
 
     // Статус обновляется при изменении переключателя
     LaunchedEffect(isServiceRunning) {
-        statusText = if (isServiceRunning) "Статус: запущен" else "Статус: остановлен"
+        statusText = if (isServiceRunning) statusRunningText else statusStoppedText
     }
 
     // Периодический опрос статуса сервиса и IP (IP меняется при переподключении к Wi-Fi)
@@ -274,9 +305,9 @@ fun FileReceiverScreen(
             try {
                 isServiceRunning = FileReceiverService.isRunning(context)
                 val ip = NetworkUtils.getWifiIpAddress(context)
-                ipText = "IP: ${ip ?: "недоступен"}"
-                httpUrlText = if (ip != null) "Браузер: http://$ip:${Protocol.PORT}" else "Браузер: —"
-                galleryUrlText = if (ip != null) "Галерея: http://$ip:${Protocol.PORT}/gallery" else "Галерея: —"
+                ipText = ipLabelText + " ${ip ?: ipUnavailableText}"
+                httpUrlText = if (ip != null) browserLabelText + " http://$ip:${Protocol.PORT}" else browserLabelText + " —"
+                galleryUrlText = if (ip != null) galleryLabelText + " http://$ip:${Protocol.PORT}/gallery" else galleryLabelText + " —"
                 mediaAccess = MainActivity.hasMediaAccess(context)
                 cameraAccess = MainActivity.hasCameraAccess(context)
                 pendingDeletes = PendingDeletes.count(context)
@@ -342,24 +373,24 @@ fun FileReceiverScreen(
         val hasFolder = targets.any { it.isDirectory }
         AlertDialog(
             onDismissRequest = { filesToDelete = emptyList() },
-            title = {
-                Text(
-                    when {
-                        targets.size == 1 && targets.first().isDirectory -> "Удалить папку?"
-                        targets.size == 1 -> "Удалить файл?"
-                        else -> "Удалить ${targets.size} элементов?"
-                    }
-                )
-            },
-            text = {
-                Text(
-                    when {
-                        targets.size == 1 -> targets.first().name + "\n\nФайл переедет в корзину — его можно вернуть."
-                        hasFolder -> "Выбранные файлы и папки переедут в корзину. Содержимое папок тоже скроется."
-                        else -> "Выбранные файлы переедут в корзину — их можно вернуть."
-                    }
-                )
-            },
+                title = {
+                    Text(
+                        when {
+                            targets.size == 1 && targets.first().isDirectory -> stringResource(R.string.delete_folder_title)
+                            targets.size == 1 -> stringResource(R.string.delete_file_title)
+                            else -> pluralStringResource(R.plurals.delete_items_title, targets.size, targets.size)
+                        }
+                    )
+                },
+                text = {
+                    Text(
+                        when {
+                            targets.size == 1 -> targets.first().name + "\n\n" + stringResource(R.string.delete_file_body)
+                            hasFolder -> stringResource(R.string.delete_folder_body)
+                            else -> stringResource(R.string.delete_files_body)
+                        }
+                    )
+                },
             confirmButton = {
                 TextButton(onClick = {
                     filesToDelete = emptyList()
@@ -371,26 +402,27 @@ fun FileReceiverScreen(
                         entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
                         clearSelection()
 
-                        val failed = targets.size - trashed.size
-                        if (failed > 0) {
-                            val message = if (failed == 1) {
-                                "Не удалось удалить элемент"
+                        val failedCount = targets.size - trashed.size
+                        if (failedCount > 0) {
+                            val failedText = if (failedCount == 1) {
+                                resources.getString(R.string.delete_error_single)
                             } else {
-                                "Не удалось удалить элементов: $failed"
+                                resources.getQuantityString(R.plurals.delete_error_plural, failedCount, failedCount)
                             }
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, failedText, Toast.LENGTH_SHORT).show()
                         }
 
                         // Корзина позволяет быстро передумать. Если снекбар уже
                         // закрылся, те же файлы лежат на странице /trash.
                         if (trashed.isNotEmpty()) {
+                            val deletedMessage = if (trashed.size == 1 && targets.size == 1) {
+                                resources.getString(R.string.deleted_single, targets.first().name)
+                            } else {
+                                resources.getString(R.string.deleted_plural, trashed.size)
+                            }
                             val result = snackbarHostState.showSnackbar(
-                                message = if (trashed.size == 1 && targets.size == 1) {
-                                    "Удалено: ${targets.first().name}"
-                                } else {
-                                    "Удалено: ${trashed.size}"
-                                },
-                                actionLabel = "Отменить",
+                                message = deletedMessage,
+                                actionLabel = undoLabel,
                                 withDismissAction = true,
                                 duration = SnackbarDuration.Long,
                             )
@@ -403,28 +435,30 @@ fun FileReceiverScreen(
                             }
                         }
                     }
-                }) { Text("Удалить") }
+                }) { Text(deleteActionLabel) }
             },
             dismissButton = {
-                TextButton(onClick = { filesToDelete = emptyList() }) { Text("Отмена") }
+                TextButton(onClick = { filesToDelete = emptyList() }) { Text(cancelButtonLabel) }
             }
         )
     }
 
-    val ipValue = ipText.removePrefix("IP: ")
-    val address = if (ipValue.isBlank() || ipValue == "—" || ipValue == "недоступен") {
-        "Нет Wi-Fi"
+    val ipValue = ipText.removePrefix(ipLabelText + " ")
+    val address = if (ipValue.isBlank() || ipValue == "—" || ipValue == ipUnavailableText) {
+        ipNoWifiText
     } else {
         "$ipValue:${Protocol.PORT}"
     }
-    val webUrl = httpUrlText.removePrefix("Браузер: ").takeIf { it.startsWith("http") }
-    val galleryUrl = galleryUrlText.removePrefix("Галерея: ").takeIf { it.startsWith("http") }
-    val shareUrl = ipValue.takeIf { it.isNotBlank() && it != "—" && it != "недоступен" }
+    val webUrl = httpUrlText.removePrefix(browserLabelText + " ").takeIf { it.startsWith("http") }
+    val galleryUrl = galleryUrlText.removePrefix(galleryLabelText + " ").takeIf { it.startsWith("http") }
+    val shareUrl = ipValue.takeIf { it.isNotBlank() && it != "—" && it != ipUnavailableText }
         ?.let { ip -> ShareTarget(ip, Protocol.PORT).openUrl }
-    val statusHint = when (statusText.removePrefix("Статус: ")) {
-        "запущен" -> "Ждём подключения в Wi-Fi"
-        "остановлен" -> "Включите, чтобы принимать файлы"
-        else -> statusText.removePrefix("Статус: ")
+
+    val statusHintText = when (statusText) {
+        statusRunningText -> statusHintRunningText
+        statusStoppedText -> statusHintStoppedText
+        // Ошибка старта сервера показывается вместо подсказки.
+        else -> statusText
     }
 
     // Один список на весь экран: карточки и плитки файлов прокручиваются вместе,
@@ -450,7 +484,7 @@ fun FileReceiverScreen(
 
             ServerCard(
                 running = isServiceRunning,
-                hint = statusHint,
+                hint = statusHintText,
                 onCheckedChange = { checked ->
                     if (!checked) {
                         context.startService(
@@ -463,9 +497,9 @@ fun FileReceiverScreen(
                         val ip = NetworkUtils.getWifiIpAddress(context)
                         if (ip == null) {
                             statusText = if (NetworkUtils.isWifiConnected(context)) {
-                                "Не удалось определить IP-адрес"
+                                errorIpResolveText
                             } else {
-                                "Нет подключения к Wi-Fi"
+                                errorNoWifiText
                             }
                         } else {
                             ContextCompat.startForegroundService(
@@ -487,7 +521,7 @@ fun FileReceiverScreen(
                 libraryUrl = galleryUrl?.replace("/gallery", "/library"),
                 shareUrl = shareUrl,
                 running = isServiceRunning,
-                onOpen = { url -> openUrl(context, url, "Нет браузера") },
+                onOpen = { url -> openUrl(context, url, resources.getString(R.string.toast_no_browser)) },
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -498,7 +532,7 @@ fun FileReceiverScreen(
                     try {
                         context.startActivity(Intent(context, VaultActivity::class.java))
                     } catch (_: Exception) {
-                        Toast.makeText(context, "Не удалось открыть хранилище", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, toastVaultOpenError, Toast.LENGTH_SHORT).show()
                     }
                 },
             )
@@ -532,13 +566,13 @@ fun FileReceiverScreen(
                     try {
                         context.startActivity(Intent(context, ScanActivity::class.java))
                     } catch (_: Exception) {
-                        Toast.makeText(context, "Не удалось открыть камеру", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, toastCameraOpenError, Toast.LENGTH_SHORT).show()
                     }
                 },
                 onOpenHost = { target ->
                     context.startActivity(
                         Intent(context, RemoteActivity::class.java)
-                            .setData(Uri.parse(target.deepLink))
+                            .setData(target.deepLink.toUri())
                     )
                 },
             )
@@ -569,7 +603,7 @@ fun FileReceiverScreen(
                     } catch (_: Exception) {
                         Toast.makeText(
                             context,
-                            "Не удалось открыть подтверждение",
+                            toastConfirmOpenError,
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -613,7 +647,7 @@ fun FileReceiverScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = if (currentPath.isEmpty()) "Принятые файлы" else currentPath.substringAfterLast('/'),
+                        text = if (currentPath.isEmpty()) stringResource(R.string.received_files) else currentPath.substringAfterLast('/'),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -624,7 +658,7 @@ fun FileReceiverScreen(
                         onClick = { showCreateFolder = true },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                     ) {
-                        Text("＋ Папка", fontSize = 12.sp)
+                        Text(stringResource(R.string.add_folder), fontSize = 12.sp)
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     CountChip(
@@ -642,7 +676,7 @@ fun FileReceiverScreen(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Поиск по файлам и папкам", fontSize = 14.sp) },
+                placeholder = { Text(stringResource(R.string.search_placeholder), fontSize = 14.sp) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -661,15 +695,14 @@ fun FileReceiverScreen(
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     EmptyFiles(
                         title = when {
-                            entries.isEmpty() && currentPath.isEmpty() -> "Пока нет принятых файлов"
-                            entries.isEmpty() -> "Папка пуста"
-                            else -> "Ничего не найдено"
+                            entries.isEmpty() && currentPath.isEmpty() -> stringResource(R.string.no_files)
+                            entries.isEmpty() -> stringResource(R.string.folder_empty)
+                            else -> stringResource(R.string.nothing_found)
                         },
                         hint = when {
-                            entries.isEmpty() && currentPath.isEmpty() ->
-                                "Перетащите файл в браузере — он появится здесь"
-                            entries.isEmpty() -> "Загрузите файл в браузере — он попадёт в эту папку"
-                            else -> "Измените запрос в поиске"
+                            entries.isEmpty() && currentPath.isEmpty() -> stringResource(R.string.drop_hint)
+                            entries.isEmpty() -> stringResource(R.string.upload_hint)
+                            else -> stringResource(R.string.change_query)
                         }
                     )
                 }
@@ -723,7 +756,7 @@ fun FileReceiverScreen(
                     }
                     entries = withContext(Dispatchers.IO) { fileSaver.entries(currentPath) }
                     if (created == null) {
-                        Toast.makeText(context, "Не удалось создать папку", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, toastCreateError, Toast.LENGTH_SHORT).show()
                     }
                 }
             },
@@ -749,12 +782,12 @@ fun FileReceiverScreen(
                     files = withContext(Dispatchers.IO) { fileSaver.listFiles() }
                     clearSelection()
                     if (failed > 0) {
-                        Toast.makeText(
-                            context,
-                            if (failed == 1) "Не удалось переместить элемент"
-                            else "Не удалось переместить: $failed",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        val moveErrorMsg = if (failed == 1) {
+                            toastMoveErrorSingle
+                        } else {
+                            resources.getString(R.string.toast_move_error_plural, failed)
+                        }
+                        Toast.makeText(context, moveErrorMsg, Toast.LENGTH_SHORT).show()
                     }
                 }
             },
@@ -778,7 +811,7 @@ fun FileReceiverScreen(
                     if (renamed == null) {
                         Toast.makeText(
                             context,
-                            "Не удалось переименовать: имя занято или недопустимо",
+                            toastRenameError,
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -789,7 +822,7 @@ fun FileReceiverScreen(
 
     if (pendingSend != null) {
         HostPickerDialog(
-            title = "Отправить на телефон",
+            title = stringResource(R.string.send_to_phone_title),
             hosts = recentHosts,
             onPick = { target ->
                 val files = pendingSend.orEmpty()
@@ -818,7 +851,11 @@ fun FileReceiverScreen(
             recentHosts = RecentHosts.list(context)
             Toast.makeText(
                 context,
-                if (sent == 1) "Отправлено на ${target.host}" else "Отправлено файлов: $sent",
+                if (sent == 1) {
+                    resources.getString(R.string.send_single, target.host)
+                } else {
+                    resources.getQuantityString(R.plurals.send_plural, sent, sent)
+                },
                 Toast.LENGTH_SHORT,
             ).show()
         }
@@ -849,7 +886,7 @@ fun FileReceiverScreen(
                     ArchiveManager.queueFile(context, target, deleteAfter = true)
                 }
                 clearSelection()
-                Toast.makeText(context, "В очереди на хранилище", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, resources.getString(R.string.vault_queue_toast), Toast.LENGTH_SHORT).show()
             },
             onUploadKeep = {
                 filesToArchive = emptyList()
@@ -857,7 +894,7 @@ fun FileReceiverScreen(
                     ArchiveManager.queueFile(context, target, deleteAfter = false)
                 }
                 clearSelection()
-                Toast.makeText(context, "В очереди на хранилище", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, resources.getString(R.string.vault_queue_toast), Toast.LENGTH_SHORT).show()
             },
             onConfigure = {
                 filesToArchive = emptyList()
@@ -901,7 +938,7 @@ private fun BrandHeader() {
                 letterSpacing = 0.2.sp,
             )
             Text(
-                text = "Файлы по Wi-Fi",
+                text = stringResource(R.string.app_tagline),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -935,7 +972,7 @@ private fun ServerCard(
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (running) "Сервер включён" else "Сервер выключен",
+                    text = if (running) stringResource(R.string.server_on) else stringResource(R.string.server_off),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -981,7 +1018,7 @@ private fun AddressCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "АДРЕС В БРАУЗЕРЕ",
+                text = stringResource(R.string.address_section),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.sp,
@@ -999,7 +1036,7 @@ private fun AddressCard(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                     Text(
-                        text = "Порт ${Protocol.PORT} · только ваша Wi-Fi сеть",
+                        text = stringResource(R.string.port_label, Protocol.PORT),
                         fontSize = 11.sp,
                         color = scheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),
@@ -1007,9 +1044,9 @@ private fun AddressCard(
                     if (shareUrl != null) {
                         Text(
                             text = if (running) {
-                                "Наведите камеру: откроется приложение или эта страница"
+                                stringResource(R.string.qr_camera_hint)
                             } else {
-                                "QR заработает, когда включите сервер"
+                                stringResource(R.string.qr_server_hint)
                             },
                             fontSize = 11.sp,
                             lineHeight = 15.sp,
@@ -1041,7 +1078,7 @@ private fun AddressCard(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Открыть страницу", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.open_page), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             if (galleryUrl != null || libraryUrl != null) {
@@ -1057,7 +1094,7 @@ private fun AddressCard(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Галерея", fontSize = 12.sp)
+                            Text(stringResource(R.string.gallery), fontSize = 12.sp)
                         }
                     }
                     if (libraryUrl != null) {
@@ -1066,7 +1103,7 @@ private fun AddressCard(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Видеотека", fontSize = 12.sp)
+                            Text(stringResource(R.string.library), fontSize = 12.sp)
                         }
                     }
                 }
@@ -1092,14 +1129,14 @@ private fun ConnectCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "ПОДКЛЮЧИТЬСЯ К ТЕЛЕФОНУ",
+                text = stringResource(R.string.connect_section),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.sp,
                 color = scheme.onSurfaceVariant,
             )
             Text(
-                text = "Смотрите галерею другого телефона или отправляйте туда файлы.",
+                text = stringResource(R.string.connect_desc),
                 fontSize = 11.5.sp,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
@@ -1114,7 +1151,7 @@ private fun ConnectCard(
                 ),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Сканировать QR", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.scan_qr), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
 
             // Камера нужна только сканеру, поэтому про отказ сообщаем здесь же —
@@ -1131,13 +1168,13 @@ private fun ConnectCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Нет доступа к камере: QR не отсканировать",
+                        text = stringResource(R.string.no_camera_access),
                         fontSize = 11.5.sp,
                         color = scheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = onGrantCamera) {
-                        Text("Разрешить", fontSize = 12.sp)
+                        Text(stringResource(R.string.grant_camera), fontSize = 12.sp)
                     }
                 }
             }
@@ -1160,7 +1197,7 @@ private fun ConnectCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "открыть ›",
+                        text = stringResource(R.string.open_host),
                         fontSize = 11.sp,
                         color = scheme.onSurfaceVariant,
                     )
@@ -1185,12 +1222,12 @@ private fun GalleryCopyCard(checked: Boolean, onCheckedChange: (Boolean) -> Unit
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Фото и видео в Галерею",
+                    text = stringResource(R.string.gallery_copy_title),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Копировать принятые снимки в Pictures/LanDrop",
+                    text = stringResource(R.string.gallery_copy_desc),
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
@@ -1223,18 +1260,18 @@ private fun MediaAccessCard(onGrant: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "Галерея без доступа к фото",
+                text = stringResource(R.string.media_access_title),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Разрешите доступ, чтобы открывать фото и видео с телефона в браузере.",
+                text = stringResource(R.string.media_access_desc),
                 fontSize = 11.5.sp,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 3.dp),
             )
             TextButton(onClick = onGrant, contentPadding = PaddingValues(0.dp)) {
-                Text("Разрешить доступ", fontSize = 12.sp)
+                Text(stringResource(R.string.grant_media_access), fontSize = 12.sp)
             }
         }
     }
@@ -1251,22 +1288,22 @@ private fun DeleteConsentCard(count: Int, onConfirm: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "Подтвердите удаление",
+                text = stringResource(R.string.delete_confirm_title),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 text = if (count == 1) {
-                    "Браузер просит удалить фото или видео с телефона. Android требует подтверждения."
+                    stringResource(R.string.delete_confirm_single)
                 } else {
-                    "Браузер просит удалить элементов: $count. Android требует подтверждения."
+                    pluralStringResource(R.plurals.delete_confirm_plural, count, count)
                 },
                 fontSize = 11.5.sp,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 3.dp),
             )
             TextButton(onClick = onConfirm, contentPadding = PaddingValues(0.dp)) {
-                Text("Подтвердить удаление", fontSize = 12.sp)
+                Text(stringResource(R.string.delete_confirm_button), fontSize = 12.sp)
             }
         }
     }
@@ -1334,7 +1371,7 @@ private fun SelectionHeader(
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "Выбрано $count",
+                text = stringResource(R.string.selected_count, count),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -1345,14 +1382,14 @@ private fun SelectionHeader(
                     onClick = onRename,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                 ) {
-                    Text("Переименовать", fontSize = 12.sp)
+                    Text(stringResource(R.string.rename_action), fontSize = 12.sp)
                 }
             }
             TextButton(onClick = onSelectAll) {
-                Text(if (allSelected) "Снять" else "Все", fontSize = 12.sp)
+                Text(if (allSelected) stringResource(R.string.deselect_all) else stringResource(R.string.select_all), fontSize = 12.sp)
             }
             TextButton(onClick = onCancel) {
-                Text("Отмена", fontSize = 12.sp)
+                Text(stringResource(R.string.cancel_button), fontSize = 12.sp)
             }
         }
         Row(
@@ -1369,7 +1406,7 @@ private fun SelectionHeader(
                 ),
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Удалить", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.delete_action), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
             OutlinedButton(
                 onClick = onMove,
@@ -1378,7 +1415,7 @@ private fun SelectionHeader(
                 border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Переместить", fontSize = 12.sp)
+                Text(stringResource(R.string.move_action), fontSize = 12.sp)
             }
             if (canArchive) {
                 OutlinedButton(
@@ -1388,7 +1425,7 @@ private fun SelectionHeader(
                     border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Хранилище", fontSize = 12.sp)
+                    Text(stringResource(R.string.archive_action), fontSize = 12.sp)
                 }
             }
         }
@@ -1403,7 +1440,7 @@ private fun SelectionHeader(
                 border = BorderStroke(1.dp, scheme.outline.copy(alpha = .7f)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Отправить на телефон", fontSize = 12.sp)
+                Text(stringResource(R.string.send_to_phone_action), fontSize = 12.sp)
             }
         }
         Spacer(modifier = Modifier.height(10.dp))
@@ -1490,21 +1527,21 @@ private fun ReceivedFileTile(
                         onDismissRequest = { menuOpen = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Переименовать", fontSize = 13.sp) },
+                            text = { Text(stringResource(R.string.rename_action), fontSize = 13.sp) },
                             onClick = {
                                 menuOpen = false
                                 onMenuRename()
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("Переместить", fontSize = 13.sp) },
+                            text = { Text(stringResource(R.string.move_action), fontSize = 13.sp) },
                             onClick = {
                                 menuOpen = false
                                 onMenuMove()
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("Удалить", fontSize = 13.sp, color = scheme.error) },
+                            text = { Text(stringResource(R.string.delete_action), fontSize = 13.sp, color = scheme.error) },
                             onClick = {
                                 menuOpen = false
                                 onMenuDelete()
@@ -1538,7 +1575,11 @@ private fun ReceivedFileTile(
             modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
         )
         Text(
-            text = if (entry.isDirectory) "Папка" else FileFormat.size(entry.size),
+            text = if (entry.isDirectory) {
+                stringResource(R.string.folder_label)
+            } else {
+                FileFormat.size(androidx.compose.ui.platform.LocalResources.current, entry.size)
+            },
             fontSize = 10.5.sp,
             color = scheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 4.dp),
@@ -1557,7 +1598,7 @@ private fun PathCrumbs(path: String, onNavigate: (String) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "Все файлы",
+            text = stringResource(R.string.all_files),
             fontSize = 11.sp,
             color = scheme.onSurfaceVariant,
             modifier = Modifier
@@ -1592,12 +1633,12 @@ private fun CreateFolderDialog(onCreate: (String) -> Unit, onDismiss: () -> Unit
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новая папка") },
+        title = { Text(stringResource(R.string.create_folder)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                placeholder = { Text("Например, Отпуск", fontSize = 14.sp) },
+                placeholder = { Text(stringResource(R.string.create_folder_example), fontSize = 14.sp) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -1607,10 +1648,10 @@ private fun CreateFolderDialog(onCreate: (String) -> Unit, onDismiss: () -> Unit
             TextButton(
                 onClick = { onCreate(name.trim()) },
                 enabled = name.isNotBlank(),
-            ) { Text("Создать") }
+            ) { Text(stringResource(R.string.create_button)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel_button)) }
         },
     )
 }
@@ -1631,12 +1672,12 @@ private fun RenameEntryDialog(
     val unchanged = trimmed == currentName
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isDirectory) "Переименовать папку" else "Переименовать файл") },
+        title = { Text(stringResource(if (isDirectory) R.string.rename_folder else R.string.rename_file)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Имя", fontSize = 12.sp) },
+                label = { Text(stringResource(R.string.name_label), fontSize = 12.sp) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -1646,10 +1687,10 @@ private fun RenameEntryDialog(
             TextButton(
                 onClick = { onRename(trimmed) },
                 enabled = trimmed.isNotEmpty() && !unchanged,
-            ) { Text("Сохранить") }
+            ) { Text(stringResource(R.string.save_button)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel_button)) }
         },
     )
 }
@@ -1665,11 +1706,15 @@ private fun MoveEntriesDialog(
     var target by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Переместить") },
+        title = { Text(stringResource(R.string.move_title)) },
         text = {
             Column {
                 Text(
-                    text = if (count == 1) "1 элемент" else "Элементов: $count",
+                    text = if (count == 1) {
+                        stringResource(R.string.move_item_single)
+                    } else {
+                        stringResource(R.string.move_items_plural, count)
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1677,7 +1722,7 @@ private fun MoveEntriesDialog(
                 LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                     item {
                         MoveTargetRow(
-                            label = "Все файлы (корень)",
+                            label = stringResource(R.string.move_root),
                             selected = target.isEmpty(),
                             onClick = { target = "" },
                         )
@@ -1694,11 +1739,11 @@ private fun MoveEntriesDialog(
         },
         confirmButton = {
             TextButton(onClick = { onMove(target) }, enabled = count > 0) {
-                Text("Переместить")
+                Text(stringResource(R.string.move_button))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel_button)) }
         },
     )
 }
@@ -1796,17 +1841,17 @@ private fun VaultCard(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Хранилище",
+                    text = stringResource(R.string.vault_title),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = when {
                         pending > 0 && autoPending > 0 ->
-                            "Ожидают выгрузки: $pending · автоархивация: $autoPending"
-                        pending > 0 -> "Ожидают выгрузки: $pending"
-                        autoPending > 0 -> "Автоархивация выгружает файлы: $autoPending"
-                        else -> "Долгое хранение: WebDAV-папка на вашем сервере"
+                            stringResource(R.string.vault_both, pending, autoPending)
+                        pending > 0 -> stringResource(R.string.vault_uploads, pending)
+                        autoPending > 0 -> stringResource(R.string.vault_auto, autoPending)
+                        else -> stringResource(R.string.vault_desc)
                     },
                     fontSize = 11.sp,
                     color = scheme.onSurfaceVariant,
@@ -1816,7 +1861,7 @@ private fun VaultCard(
                 )
             }
             Text(
-                text = "открыть ›",
+                text = stringResource(R.string.vault_open),
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant,
             )
@@ -1843,7 +1888,7 @@ private fun AccessModeCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "ЧТО ВИДНО КЛИЕНТАМ",
+                text = stringResource(R.string.access_section),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.sp,
@@ -1854,21 +1899,21 @@ private fun AccessModeCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                ModeChip("Всё", mode is AccessMode.All) { onModeChange(AccessMode.All) }
-                ModeChip("Галерея", mode is AccessMode.GalleryOnly) { onModeChange(AccessMode.GalleryOnly) }
-                ModeChip("Выбор…", mode is AccessMode.Selected, onClick = onPickSelection)
-                ModeChip("Сегодня", mode is AccessMode.Period.Today) { onModeChange(AccessMode.Period.Today) }
-                ModeChip("Вчера", mode is AccessMode.Period.Yesterday) { onModeChange(AccessMode.Period.Yesterday) }
-                ModeChip("Дата…", mode is AccessMode.Period.OnDate, onClick = onPickDate)
+                ModeChip(stringResource(R.string.access_all), mode is AccessMode.All) { onModeChange(AccessMode.All) }
+                ModeChip(stringResource(R.string.access_gallery), mode is AccessMode.GalleryOnly) { onModeChange(AccessMode.GalleryOnly) }
+                ModeChip(stringResource(R.string.access_selected), mode is AccessMode.Selected, onClick = onPickSelection)
+                ModeChip(stringResource(R.string.access_today), mode is AccessMode.Period.Today) { onModeChange(AccessMode.Period.Today) }
+                ModeChip(stringResource(R.string.access_yesterday), mode is AccessMode.Period.Yesterday) { onModeChange(AccessMode.Period.Yesterday) }
+                ModeChip(stringResource(R.string.access_date), mode is AccessMode.Period.OnDate, onClick = onPickDate)
             }
             Text(
                 text = when (mode) {
-                    is AccessMode.All -> "Клиенты видят принятые файлы и галерею телефона"
-                    is AccessMode.GalleryOnly -> "Видна только галерея телефона, принятые файлы скрыты"
-                    is AccessMode.Selected -> "Видны только отмеченные файлы ($fileCount во всей папке)"
-                    is AccessMode.Period.Today -> "Видны файлы и фото за сегодня"
-                    is AccessMode.Period.Yesterday -> "Видны файлы и фото, полученные вчера"
-                    is AccessMode.Period.OnDate -> "Видны файлы и фото за выбранную дату"
+                    is AccessMode.All -> stringResource(R.string.access_desc_all)
+                    is AccessMode.GalleryOnly -> stringResource(R.string.access_desc_gallery)
+                    is AccessMode.Selected -> stringResource(R.string.access_desc_selected, fileCount)
+                    is AccessMode.Period.Today -> stringResource(R.string.access_desc_today)
+                    is AccessMode.Period.Yesterday -> stringResource(R.string.access_desc_yesterday)
+                    is AccessMode.Period.OnDate -> stringResource(R.string.access_desc_date)
                 },
                 fontSize = 11.sp,
                 color = scheme.onSurfaceVariant,
@@ -1912,10 +1957,10 @@ private fun SelectionDialog(
     val selected = remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Что видно клиентам") },
+        title = { Text(stringResource(R.string.selection_title)) },
         text = {
             if (files.isEmpty()) {
-                Text("Папка приёма пуста")
+                Text(stringResource(R.string.selection_empty))
             } else {
                 LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
                     items(files, key = { it.absolutePath }) { file ->
@@ -1950,11 +1995,11 @@ private fun SelectionDialog(
                 onClick = { onConfirm(selected.value) },
                 enabled = files.isEmpty() || selected.value.isNotEmpty(),
             ) {
-                Text("Показывать ${selected.value.size}")
+                Text(stringResource(R.string.selection_show, selected.value.size))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel_button)) }
         },
     )
 }
@@ -1974,23 +2019,23 @@ private fun ArchiveDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Отправить в хранилище?") },
+        title = { Text(stringResource(R.string.archive_dialog_title)) },
         text = {
             Column {
                 Text(
-                    text = if (files.size == 1) files.first().name else "Файлов: ${files.size}",
+                    text = if (files.size == 1) files.first().name else stringResource(R.string.archive_files_count, files.size),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = if (storageReady) {
                         if (files.size == 1) {
-                            "Файл выгрузится на ваш WebDAV-сервер."
+                            stringResource(R.string.archive_file_upload_single)
                         } else {
-                            "Файлы выгрузятся на ваш WebDAV-сервер."
+                            stringResource(R.string.archive_file_upload_plural)
                         }
                     } else {
-                        "Хранилище ещё не настроено: нужен адрес WebDAV-папки."
+                        stringResource(R.string.archive_not_configured)
                     },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2002,18 +2047,18 @@ private fun ArchiveDialog(
             Column {
                 if (storageReady) {
                     TextButton(onClick = onUploadAndDelete) {
-                        Text("Выгрузить и удалить с телефона")
+                        Text(stringResource(R.string.archive_upload_delete))
                     }
                     TextButton(onClick = onUploadKeep) {
-                        Text("Выгрузить, оставить на телефоне")
+                        Text(stringResource(R.string.archive_upload_keep))
                     }
                 } else {
                     TextButton(onClick = onConfigure) {
-                        Text("Настроить хранилище")
+                        Text(stringResource(R.string.archive_configure))
                     }
                 }
                 TextButton(onClick = onDismiss) {
-                    Text("Отмена")
+                    Text(stringResource(R.string.cancel_button))
                 }
             }
         },
@@ -2042,7 +2087,7 @@ private fun openFile(context: Context, file: File) {
     val uri = try {
         FileProvider.getUriForFile(context, "${context.packageName}.files", file)
     } catch (_: IllegalArgumentException) {
-        Toast.makeText(context, "Не удалось открыть файл", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.toast_open_file_error), Toast.LENGTH_SHORT).show()
         return
     }
 
@@ -2053,8 +2098,8 @@ private fun openFile(context: Context, file: File) {
     try {
         context.startActivity(Intent.createChooser(intent, file.name))
     } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "Нет приложения для этого типа файла", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.toast_no_app_for_file), Toast.LENGTH_SHORT).show()
     } catch (_: Exception) {
-        Toast.makeText(context, "Не удалось открыть файл", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.toast_open_file_error), Toast.LENGTH_SHORT).show()
     }
 }

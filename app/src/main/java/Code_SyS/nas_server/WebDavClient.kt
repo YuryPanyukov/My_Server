@@ -7,7 +7,6 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
-import java.util.Base64
 import java.util.Locale
 
 /**
@@ -132,14 +131,32 @@ class WebDavClient(private val config: WebDavConfig) {
         connection.readTimeout = READ_TIMEOUT_MS
         connection.setRequestProperty("User-Agent", "LanDrop/1.0")
         if (config.username.isNotEmpty() || config.password.isNotEmpty()) {
-            connection.setRequestProperty(
-                "Authorization",
-                "Basic " + Base64.getEncoder().encodeToString(
-                    "${config.username}:${config.password}".toByteArray(StandardCharsets.UTF_8)
-                ),
-            )
+            connection.setRequestProperty("Authorization", basicAuth(config.username, config.password))
         }
         return connection
+    }
+
+    /**
+     * Заголовок Basic-авторизации. `java.util.Base64` появился только в API 26,
+     * а приложение поддерживает API 24, поэтому кодируем сами (RFC 4648).
+     */
+    private fun basicAuth(user: String, password: String): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        val bytes = "$user:$password".toByteArray(StandardCharsets.UTF_8)
+        val encoded = StringBuilder((bytes.size + 2) / 3 * 4)
+        var i = 0
+        while (i < bytes.size) {
+            val b0 = bytes[i].toInt() and 0xFF
+            val b1 = if (i + 1 < bytes.size) bytes[i + 1].toInt() and 0xFF else 0
+            val b2 = if (i + 2 < bytes.size) bytes[i + 2].toInt() and 0xFF else 0
+            val triple = (b0 shl 16) or (b1 shl 8) or b2
+            encoded.append(alphabet[triple ushr 18 and 0x3F])
+            encoded.append(alphabet[triple ushr 12 and 0x3F])
+            encoded.append(if (i + 1 < bytes.size) alphabet[triple ushr 6 and 0x3F] else '=')
+            encoded.append(if (i + 2 < bytes.size) alphabet[triple and 0x3F] else '=')
+            i += 3
+        }
+        return "Basic $encoded"
     }
 
     internal fun buildTarget(path: String): String {

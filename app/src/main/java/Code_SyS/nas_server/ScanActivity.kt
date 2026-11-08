@@ -18,6 +18,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.core.net.toUri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -50,6 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -160,7 +163,7 @@ class ScanActivity : ComponentActivity() {
         } catch (_: Exception) {
             Toast.makeText(
                 this,
-                "Разрешение включается в «Настройки → Приложения → LanDrop»",
+                getString(R.string.scan_settings_hint),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -171,7 +174,7 @@ class ScanActivity : ComponentActivity() {
         val target = ShareLinks.parseScanResult(raw)
         if (target == null) {
             // Камера продолжает искать: пользователь мог навести на чужой код.
-            Toast.makeText(this, "Это не адрес LanDrop", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.scan_not_landrop), Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -179,7 +182,7 @@ class ScanActivity : ComponentActivity() {
         RecentHosts.remember(this, target)
         startActivity(
             Intent(this, RemoteActivity::class.java)
-                .setData(Uri.parse(target.deepLink))
+                .setData(target.deepLink.toUri())
         )
         finish()
     }
@@ -192,6 +195,7 @@ private fun ScanCameraScreen(
     onResult: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
 
@@ -208,7 +212,7 @@ private fun ScanCameraScreen(
         val provider = try {
             context.awaitCameraProvider()
         } catch (e: Exception) {
-            failure = "Камера недоступна"
+            failure = resources.getString(R.string.scan_camera_unavailable)
             return@LaunchedEffect
         }
 
@@ -239,7 +243,7 @@ private fun ScanCameraScreen(
             // Выход со сканера или повтор — это не ошибка камеры.
             throw e
         } catch (_: Exception) {
-            failure = "Не удалось включить камеру"
+            failure = resources.getString(R.string.scan_camera_failed)
         } finally {
             provider.unbindAll()
             executor.shutdown()
@@ -277,14 +281,14 @@ private fun ScanCameraScreen(
         )
 
         ScanHeader(
-            title = "Наведите на QR",
-            subtitle = "Код на экране другого телефона",
+            title = stringResource(R.string.scan_title),
+            subtitle = stringResource(R.string.scan_subtitle),
             onClose = onClose,
         )
 
         if (failure == null) {
             Text(
-                text = status ?: "Сканирование…",
+                text = status ?: stringResource(R.string.scan_status_scanning),
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = .8f),
                 textAlign = TextAlign.Center,
@@ -335,8 +339,7 @@ private fun BoxScope.CameraFailureCard(
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "Камеру могло занять другое приложение, либо доступ к ней " +
-                "запрещён в настройках телефона.",
+            text = stringResource(R.string.scan_error),
             fontSize = 12.sp,
             color = Color.White.copy(alpha = .74f),
             textAlign = TextAlign.Center,
@@ -347,7 +350,7 @@ private fun BoxScope.CameraFailureCard(
             modifier = Modifier.padding(top = 6.dp),
         ) {
             Text(
-                text = "Повторить",
+                text = stringResource(R.string.scan_retry),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFF7B9CFF),
@@ -355,7 +358,7 @@ private fun BoxScope.CameraFailureCard(
         }
         TextButton(onClick = onClose) {
             Text(
-                text = "Закрыть",
+                text = stringResource(R.string.scan_close),
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = .6f),
             )
@@ -418,7 +421,7 @@ private fun CameraWaitingScreen() {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator(color = Color.White)
             Text(
-                text = "Запрос доступа к камере…",
+                text = stringResource(R.string.scan_waiting_permission),
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = .8f),
                 modifier = Modifier.padding(top = 16.dp),
@@ -445,8 +448,8 @@ private fun CameraDeniedScreen(
             .background(Color.Black)
     ) {
         ScanHeader(
-            title = "Нет доступа к камере",
-            subtitle = "Разрешение нужно для сканера QR",
+            title = stringResource(R.string.scan_denied_title),
+            subtitle = stringResource(R.string.scan_denied_subtitle),
             onClose = onClose,
         )
 
@@ -462,7 +465,11 @@ private fun CameraDeniedScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = if (canAskAgain) "Разрешить доступ к камере" else "Камера отключена в настройках",
+                text = if (canAskAgain) {
+                    stringResource(R.string.scan_grant_camera)
+                } else {
+                    stringResource(R.string.scan_camera_disabled)
+                },
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,
@@ -470,9 +477,9 @@ private fun CameraDeniedScreen(
             )
             Text(
                 text = if (canAskAgain) {
-                    "Без камеры телефон не считает QR с экрана другого телефона."
+                    stringResource(R.string.scan_why_camera)
                 } else {
-                    "Разрешение отключено: включите «Камера» в разделе «Разрешения» и вернитесь назад."
+                    stringResource(R.string.scan_denied_settings_hint)
                 },
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = .74f),
@@ -484,7 +491,11 @@ private fun CameraDeniedScreen(
                 modifier = Modifier.padding(top = 6.dp),
             ) {
                 Text(
-                    text = if (canAskAgain) "Разрешить доступ" else "Открыть настройки",
+                    text = if (canAskAgain) {
+                        stringResource(R.string.scan_grant_access)
+                    } else {
+                        stringResource(R.string.scan_open_settings)
+                    },
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF7B9CFF),
@@ -493,7 +504,7 @@ private fun CameraDeniedScreen(
             if (canAskAgain) {
                 TextButton(onClick = onOpenSettings) {
                     Text(
-                        text = "Открыть настройки",
+                        text = stringResource(R.string.scan_open_settings),
                         fontSize = 12.sp,
                         color = Color.White.copy(alpha = .6f),
                     )

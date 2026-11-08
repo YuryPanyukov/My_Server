@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import androidx.core.content.edit
 import java.io.File
 import java.io.IOException
 
@@ -34,9 +35,7 @@ object GallerySaver {
 
     fun setEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_ENABLED, enabled)
-            .apply()
+            .edit { putBoolean(KEY_ENABLED, enabled) }
     }
 
     /** Копирует фото/видео в Галерею. `null` — тип не медиа, копия не нужна или не удалась. */

@@ -1,6 +1,7 @@
 package Code_SyS.nas_server
 
 import android.content.Context
+import androidx.core.content.edit
 import java.io.File
 
 /**
@@ -64,11 +65,10 @@ object AutoArchiveSettings {
     }
 
     fun save(context: Context, config: AutoArchiveConfig) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_ENABLED, config.enabled)
-            .putInt(KEY_DAYS, config.maxAgeDays)
-            .apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_ENABLED, config.enabled)
+            putInt(KEY_DAYS, config.maxAgeDays)
+        }
     }
 
     /** Прошла ли холодная отсечка с прошлого скана: скан не должен тикать в секунду. */
@@ -78,8 +78,6 @@ object AutoArchiveSettings {
 
     fun markScan(context: Context, nowMillis: Long) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putLong(KEY_LAST_SCAN, nowMillis)
-            .apply()
+            .edit { putLong(KEY_LAST_SCAN, nowMillis) }
     }
 }

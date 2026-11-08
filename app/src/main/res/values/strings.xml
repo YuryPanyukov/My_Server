@@ -3,4 +3,366 @@
     <string name="app_tagline">Файлы по Wi-Fi</string>
     <string name="notification_channel_name">LanDrop</string>
     <string name="notification_channel_desc">Приём файлов по Wi-Fi</string>
+
+    <!-- Статус сервера -->
+    <string name="server_on">Сервер включён</string>
+    <string name="server_off">Сервер выключен</string>
+    <string name="status_running">запущен</string>
+    <string name="status_stopped">остановлен</string>
+    <string name="status_hint_running">Ждём подключения в Wi-Fi</string>
+    <string name="status_hint_stopped">Включите, чтобы принимать файлы</string>
+    <string name="error_ip_resolve">Не удалось определить IP-адрес</string>
+    <string name="error_no_wifi">Нет подключения к Wi-Fi</string>
+    <string name="ip_unavailable">недоступен</string>
+    <string name="no_wifi">Нет Wi-Fi</string>
+    <string name="ip_label">IP:</string>
+    <string name="browser_label">Браузер:</string>
+    <string name="gallery_label">Галерея:</string>
+    <string name="port_label">Порт %1$d · только ваша Wi-Fi сеть</string>
+    <string name="qr_camera_hint">Наведите камеру: откроется приложение или эта страница</string>
+    <string name="qr_server_hint">QR заработает, когда включите сервер</string>
+    <string name="qr_code_description">QR-код для подключения</string>
+    <string name="open_page">Открыть страницу</string>
+    <string name="address_section">АДРЕС В БРАУЗЕРЕ</string>
+
+    <!-- Галерея и videoteka -->
+    <string name="gallery">Галерея</string>
+    <string name="library">Видеотека</string>
+
+    <!-- Подключение к телефону -->
+    <string name="connect_section">ПОДКЛЮЧИТЬСЯ К ТЕЛЕФОНУ</string>
+    <string name="connect_desc">Смотрите галерею другого телефона или отправляйте туда файлы.</string>
+    <string name="scan_qr">Сканировать QR</string>
+    <string name="no_camera_access">Нет доступа к камере: QR не отсканировать</string>
+    <string name="grant_camera">Разрешить</string>
+    <string name="open_host">открыть ›</string>
+    <string name="recent_hosts_section">НЕДАВНИЕ ТЕЛЕФОНЫ</string>
+    <string name="send_wifi">Отправить по Wi-Fi</string>
+    <string name="send_to_phone">На недавний телефон</string>
+    <string name="send_to_phone_desc">Появится после первого подключения по QR</string>
+
+    <!-- Копия в Галерею -->
+    <string name="gallery_copy_title">Фото и видео в Галерею</string>
+    <string name="gallery_copy_desc">Копировать принятые снимки в Pictures/LanDrop</string>
+
+    <!-- Доступ к медиа -->
+    <string name="media_access_title">Галерея без доступа к фото</string>
+    <string name="media_access_desc">Разрешите доступ, чтобы открывать фото и видео с телефона в браузере.</string>
+    <string name="grant_media_access">Разрешить доступ</string>
+
+    <!-- Подтверждение удаления -->
+    <string name="delete_confirm_title">Подтвердите удаление</string>
+    <string name="delete_confirm_single">Браузер просит удалить фото или видео с телефона. Android требует подтверждения.</string>
+    <plurals name="delete_confirm_plural">
+        <item quantity="one">Браузер просит удалить %1$d элемент. Android требует подтверждения.</item>
+        <item quantity="few">Браузер просит удалить %1$d элемента. Android требует подтверждения.</item>
+        <item quantity="many">Браузер просит удалить элементов: %1$d. Android требует подтверждения.</item>
+        <item quantity="other">Браузер просит удалить элементов: %1$d. Android требует подтверждения.</item>
+    </plurals>
+    <string name="delete_confirm_button">Подтвердить удаление</string>
+
+    <!-- Файлы и папки -->
+    <string name="received_files">Принятые файлы</string>
+    <string name="add_folder">＋ Папка</string>
+    <string name="search_placeholder">Поиск по файлам и папкам</string>
+    <string name="no_files">Пока нет принятых файлов</string>
+    <string name="folder_empty">Папка пуста</string>
+    <string name="nothing_found">Ничего не найдено</string>
+    <string name="drop_hint">Перетащите файл в браузере — он появится здесь</string>
+    <string name="upload_hint">Загрузите файл в браузере — он попадёт в эту папку</string>
+    <string name="change_query">Измените запрос в поиске</string>
+    <string name="all_files">Все файлы</string>
+    <string name="folder_label">Папка</string>
+
+    <!-- Удаление -->
+    <string name="delete_folder_title">Удалить папку?</string>
+    <string name="delete_file_title">Удалить файл?</string>
+    <plurals name="delete_items_title">
+        <item quantity="one">Удалить %1$d элемент?</item>
+        <item quantity="few">Удалить %1$d элемента?</item>
+        <item quantity="many">Удалить %1$d элементов?</item>
+        <item quantity="other">Удалить %1$d элементов?</item>
+    </plurals>
+    <string name="delete_file_body">%1$s\n\nФайл переедет в корзину — его можно вернуть.</string>
+    <string name="delete_folder_body">Выбранные файлы и папки переедут в корзину. Содержимое папок тоже скроется.</string>
+    <string name="delete_files_body">Выбранные файлы переедут в корзину — их можно вернуть.</string>
+    <string name="delete_error_single">Не удалось удалить элемент</string>
+    <plurals name="delete_error_plural">
+        <item quantity="one">Не удалось удалить %1$d элемент</item>
+        <item quantity="few">Не удалось удалить %1$d элемента</item>
+        <item quantity="many">Не удалось удалить элементов: %1$d</item>
+        <item quantity="other">Не удалось удалить элементов: %1$d</item>
+    </plurals>
+    <string name="deleted_single">Удалено: %1$s</string>
+    <string name="deleted_plural">Удалено: %1$d</string>
+    <string name="undo">Отменить</string>
+
+    <!-- Создание папки -->
+    <string name="create_folder">Новая папка</string>
+    <string name="create_folder_example">Например, Отпуск</string>
+    <string name="create_button">Создать</string>
+    <string name="create_error">Не удалось создать папку</string>
+
+    <!-- Переименование -->
+    <string name="rename_folder">Переименовать папку</string>
+    <string name="rename_file">Переименовать файл</string>
+    <string name="name_label">Имя</string>
+    <string name="save_button">Сохранить</string>
+    <string name="cancel_button">Отмена</string>
+    <string name="rename_error">Не удалось переименовать: имя занято или недопустимо</string>
+
+    <!-- Перемещение -->
+    <string name="move_title">Переместить</string>
+    <string name="move_item_single">1 элемент</string>
+    <string name="move_items_plural">Элементов: %1$d</string>
+    <string name="move_root">Все файлы (корень)</string>
+    <string name="move_button">Переместить</string>
+
+    <!-- Отправка на телефон -->
+    <string name="send_button">Отправить</string>
+    <string name="back_button">← Назад</string>
+    <string name="archive_shared_hint">Файлы выгрузятся на сервер, когда он доступен.</string>
+    <string name="send_to_phone_title">Отправить на телефон</string>
+    <string name="send_single">Отправлено на %1$s</string>
+    <plurals name="send_plural">
+        <item quantity="one">Отправлен %1$d файл</item>
+        <item quantity="few">Отправлено %1$d файла</item>
+        <item quantity="many">Отправлено файлов: %1$d</item>
+        <item quantity="other">Отправлено файлов: %1$d</item>
+    </plurals>
+    <string name="sending">Отправка…</string>
+
+    <!-- Хранилище -->
+    <string name="vault_title">Хранилище</string>
+    <string name="vault_uploads">Ожидают выгрузки: %1$d</string>
+    <string name="vault_auto">Автоархивация выгружает файлы: %1$d</string>
+    <string name="vault_both">Ожидают выгрузки: %1$d · автоархивация: %2$d</string>
+    <string name="vault_desc">Долгое хранение: WebDAV-папка на вашем сервере</string>
+    <string name="vault_open">открыть ›</string>
+    <string name="vault_section">ДОЛГОЕ ХРАНЕНИЕ</string>
+    <string name="vault_desc_long">WebDAV-папка на вашем компьютере, NAS или роутере. Файлы копируются туда и остаются, даже если телефон и все его копии пропадут.</string>
+    <string name="folder_address">Адрес папки</string>
+    <string name="folder_address_example">http://192.168.1.10:5005/landrop</string>
+    <string name="login_label">Логин</string>
+    <string name="password_label">Пароль</string>
+    <string name="password_entered"> (введён)</string>
+    <string name="checking">Проверяем…</string>
+    <string name="check_button">Проверить</string>
+    <string name="save_button_vault">Сохранить</string>
+    <string name="check_needs_address">Сначала укажите адрес папки</string>
+    <string name="check_success">Сервер отвечает</string>
+    <string name="address_must_http">Адрес должен начинаться с http://</string>
+    <string name="vault_saved">Хранилище сохранено</string>
+    <string name="vault_uploads_header">Выгрузки</string>
+    <string name="vault_clear">Очистить</string>
+    <string name="vault_empty_title">Пока ничего не выгружалось</string>
+    <string name="vault_empty_hint">Нажмите «В хранилище» у файла на главном экране или отправьте файл через «Поделиться» → LanDrop</string>
+    <string name="vault_status_queued">В очереди</string>
+    <string name="vault_status_uploading">Выгружается…</string>
+    <string name="vault_status_done">На сервере</string>
+    <string name="retry">Повтор</string>
+    <string name="archive_dialog_title">Отправить в хранилище?</string>
+    <string name="archive_files_count">Файлов: %1$d</string>
+    <string name="archive_file_upload_single">Файл выгрузится на ваш WebDAV-сервер.</string>
+    <string name="archive_file_upload_plural">Файлы выгрузятся на ваш WebDAV-сервер.</string>
+    <string name="archive_not_configured">Хранилище ещё не настроено: нужен адрес WebDAV-папки.</string>
+    <string name="archive_upload_delete">Выгрузить и удалить с телефона</string>
+    <string name="archive_upload_keep">Выгрузить, оставить на телефоне</string>
+    <string name="archive_configure">Настроить хранилище</string>
+    <string name="vault_queue_toast">В очереди на хранилище</string>
+    <string name="vault_queue_toast_shared">В очереди: %1$d</string>
+
+    <!-- Автоархивация -->
+    <string name="auto_archive">Автоархивация</string>
+    <string name="auto_archive_disabled">Выключена</string>
+    <plurals name="auto_archive_enabled">
+        <item quantity="one">Старше %1$d дня: выгрузить и удалить с телефона</item>
+        <item quantity="few">Старше %1$d дней: выгрузить и удалить с телефона</item>
+        <item quantity="many">Старше %1$d дней: выгрузить и удалить с телефона</item>
+        <item quantity="other">Старше %1$d дней: выгрузить и удалить с телефона</item>
+    </plurals>
+    <string name="auto_archive_desc_off">Сначала настройте хранилище выше</string>
+    <plurals name="auto_age_days">
+        <item quantity="one">%1$d день</item>
+        <item quantity="few">%1$d дня</item>
+        <item quantity="many">%1$d дней</item>
+        <item quantity="other">%1$d дней</item>
+    </plurals>
+    <string name="vault_working">Работает при запущенном приложении: старые файлы попадут в очередь</string>
+
+    <!-- Режим доступа -->
+    <string name="access_section">ЧТО ВИДНО КЛИЕНТАМ</string>
+    <string name="access_all">Всё</string>
+    <string name="access_gallery">Галерея</string>
+    <string name="access_selected">Выбор…</string>
+    <string name="access_today">Сегодня</string>
+    <string name="access_yesterday">Вчера</string>
+    <string name="access_date">Дата…</string>
+    <string name="access_desc_all">Клиенты видят принятые файлы и галерею телефона</string>
+    <string name="access_desc_gallery">Видна только галерея телефона, принятые файлы скрыты</string>
+    <string name="access_desc_selected">Видны только отмеченные файлы (%1$d во всей папке)</string>
+    <string name="access_desc_today">Видны файлы и фото за сегодня</string>
+    <string name="access_desc_yesterday">Видны файлы и фото, полученные вчера</string>
+    <string name="access_desc_date">Видны файлы и фото за выбранную дату</string>
+    <string name="selection_title">Что видно клиентам</string>
+    <string name="selection_empty">Папка приёма пуста</string>
+    <string name="selection_show">Показывать %1$d</string>
+
+    <!-- Плитка файла -->
+    <string name="selected_count">Выбрано %1$d</string>
+    <string name="select_all">Все</string>
+    <string name="deselect_all">Снять</string>
+    <string name="rename_action">Переименовать</string>
+    <string name="move_action">Переместить</string>
+    <string name="delete_action">Удалить</string>
+    <string name="archive_action">Хранилище</string>
+    <string name="send_to_phone_action">Отправить на телефон</string>
+
+    <!-- Тосты -->
+    <string name="toast_vault_open_error">Не удалось открыть хранилище</string>
+    <string name="toast_camera_open_error">Не удалось открыть камеру</string>
+    <string name="toast_confirm_open_error">Не удалось открыть подтверждение</string>
+    <string name="toast_move_error_single">Не удалось переместить элемент</string>
+    <string name="toast_move_error_plural">Не удалось переместить: %1$d</string>
+    <string name="toast_open_file_error">Не удалось открыть файл</string>
+    <string name="toast_no_app_for_file">Нет приложения для этого типа файла</string>
+    <string name="toast_no_browser">Нет браузера</string>
+
+    <!-- Очередь отправки -->
+    <string name="upload_sending">Отправка</string>
+    <string name="upload_done">Отправка завершена</string>
+    <string name="upload_close">Закрыть</string>
+    <string name="upload_cancel_all">Отменить всё</string>
+    <string name="upload_retry_failed">Повторить упавшие (%1$d)</string>
+    <string name="upload_progress">%1$d из %2$d · %3$d%%</string>
+    <string name="upload_progress_speed"> · %1$s/с</string>
+    <string name="upload_failed">Не удалось отправить</string>
+    <string name="upload_status_queued">пропущен</string>
+    <string name="upload_status_cancelled">отменено</string>
+    <string name="upload_status_error">ошибка</string>
+    <string name="upload_status_done">готово</string>
+
+    <!-- Сканер QR -->
+    <string name="scan_retry">Повторить</string>
+    <string name="scan_close">Закрыть</string>
+    <string name="scan_error">Камеру могло занять другое приложение, либо доступ к ней запрещён в настройках телефона.</string>
+    <string name="scan_settings_hint">Разрешение включается в «Настройки → Приложения → LanDrop»</string>
+    <string name="scan_not_landrop">Это не адрес LanDrop</string>
+    <string name="scan_camera_unavailable">Камера недоступна</string>
+    <string name="scan_camera_failed">Не удалось включить камеру</string>
+    <string name="scan_title">Наведите на QR</string>
+    <string name="scan_subtitle">Код на экране другого телефона</string>
+    <string name="scan_status_scanning">Сканирование…</string>
+    <string name="scan_waiting_permission">Запрос доступа к камере…</string>
+    <string name="scan_denied_title">Нет доступа к камере</string>
+    <string name="scan_denied_subtitle">Разрешение нужно для сканера QR</string>
+    <string name="scan_grant_camera">Разрешить доступ к камере</string>
+    <string name="scan_camera_disabled">Камера отключена в настройках</string>
+    <string name="scan_why_camera">Без камеры телефон не считает QR с экрана другого телефона.</string>
+    <string name="scan_denied_settings_hint">Разрешение отключено: включите «Камера» в разделе «Разрешения» и вернитесь назад.</string>
+    <string name="scan_grant_access">Разрешить доступ</string>
+    <string name="scan_open_settings">Открыть настройки</string>
+
+    <!-- Остальные экраны -->
+    <string name="channel_delete_name">Удаление фото и видео</string>
+    <string name="delete_pending_single">Браузер просит удалить фото или видео с телефона</string>
+    <plurals name="delete_pending_plural">
+        <item quantity="one">Браузер просит удалить %1$d элемент</item>
+        <item quantity="few">Браузер просит удалить %1$d элемента</item>
+        <item quantity="many">Браузер просит удалить элементов: %1$d</item>
+        <item quantity="other">Браузер просит удалить элементов: %1$d</item>
+    </plurals>
+    <string name="saving_files">Сохраняем файлы…</string>
+    <string name="save_files_error">Не удалось сохранить файлы</string>
+    <string name="saved_single">Сохранено: %1$s</string>
+    <plurals name="saved_plural">
+        <item quantity="one">Сохранён %1$d файл</item>
+        <item quantity="few">Сохранено %1$d файла</item>
+        <item quantity="many">Сохранено файлов: %1$d</item>
+        <item quantity="other">Сохранено файлов: %1$d</item>
+    </plurals>
+    <string name="send_error_unknown_size">Не удалось отправить: неизвестен размер файлов</string>
+    <string name="send_file">Отправить файл</string>
+    <string name="send_files">Отправить файлы</string>
+    <plurals name="and_more">
+        <item quantity="one">и ещё %1$d</item>
+        <item quantity="few">и ещё %1$d</item>
+        <item quantity="many">и ещё %1$d</item>
+        <item quantity="other">и ещё %1$d</item>
+    </plurals>
+    <string name="saving">Сохраняем…</string>
+    <string name="share_save_title">В папку LanDrop</string>
+    <string name="share_save_desc">Файлы появятся на компьютере в браузере</string>
+    <string name="upload_speed">%1$d%% · %2$s/с</string>
+    <string name="notification_server_running">Сервер запущен на порту %1$d</string>
+    <string name="toast_no_app_for_link">Нет приложения для ссылки</string>
+
+    <!-- Удалённый просмотр -->
+    <string name="remote_bad_link">Ссылка не содержит адрес LanDrop</string>
+    <string name="remote_server_unavailable">Сервер недоступен</string>
+    <string name="remote_read_error">Не удалось прочитать файлы</string>
+    <string name="remote_delete_folder_title">Удалить папку на телефоне?</string>
+    <string name="remote_delete_file_title">Удалить файл на телефоне?</string>
+    <plurals name="remote_delete_items_title">
+        <item quantity="one">Удалить %1$d элемент на телефоне?</item>
+        <item quantity="few">Удалить %1$d элемента на телефоне?</item>
+        <item quantity="many">Удалить %1$d элементов на телефоне?</item>
+        <item quantity="other">Удалить %1$d элементов на телефоне?</item>
+    </plurals>
+    <string name="remote_delete_folder_body">Выбранные файлы и папки будут удалены на телефоне-хосте. Содержимое папок тоже удалится.</string>
+    <string name="remote_delete_files_body">Выбранные файлы будут удалены на телефоне-хосте.</string>
+    <string name="remote_title">Просмотр по Wi-Fi</string>
+    <string name="remote_subtitle">%1$s · удалённый телефон</string>
+    <string name="remote_folders_error">Не удалось получить список папок</string>
+    <string name="remote_open_browser">Браузер</string>
+    <string name="remote_no_picker">Нет выбора файлов</string>
+    <string name="remote_tab_files">Файлы</string>
+    <string name="remote_delete_file">Удалить файл</string>
+    <string name="remote_delete_selected">Удалить выбранные</string>
+    <string name="remote_no_files">На телефоне пока нет файлов</string>
+    <string name="remote_drop_hint">Отправьте файл кнопкой ниже — он появится в этом списке</string>
+    <string name="remote_upload_hint">Отправьте файл кнопкой ниже — он попадёт в эту папку</string>
+    <string name="remote_source_all">Все</string>
+    <string name="remote_gallery_empty">Галерея пуста</string>
+    <string name="remote_gallery_hint">Разрешите на том телефоне доступ к фото и видео или добавьте файлы</string>
+    <string name="remote_saved_downloads">Сохранено в Загрузки</string>
+    <string name="remote_save_error">Не удалось сохранить файл</string>
+    <string name="remote_storage_permission">Нужен доступ к памяти</string>
+    <string name="remote_open_in_browser">Открыть в браузере</string>
+    <string name="remote_saving">Сохраняю…</string>
+    <string name="remote_saving_percent">Сохраняю %1$d%%</string>
+    <string name="remote_in_browser">В браузере</string>
+    <string name="remote_no_connection">Нет связи с телефоном</string>
+
+    <!-- Названия источников галереи -->
+    <string name="media_source_received">Принятые</string>
+    <string name="media_source_device">Фото и видео телефона</string>
+
+    <!-- Размеры файлов -->
+    <string name="size_bytes">%1$d Б</string>
+    <string name="size_kb">КБ</string>
+    <string name="size_mb">МБ</string>
+    <string name="size_gb">ГБ</string>
+    <string name="size_tb">ТБ</string>
+
+    <!-- Ошибки выгрузки в хранилище -->
+    <string name="vault_error_auth">Хранилище не пустило: проверьте логин и пароль</string>
+    <string name="vault_error_not_found">Папка не найдена на сервере</string>
+    <string name="vault_error_too_large">Файл больше, чем принимает сервер</string>
+    <string name="vault_error_no_space">На хранилище нет места</string>
+    <string name="vault_error_http">Сервер ответил %1$d</string>
+    <string name="vault_error_no_connection">Нет связи с хранилищем: %1$s</string>
+    <string name="vault_error_network_broken">обрыв сети</string>
+    <string name="vault_error_unknown">Неизвестная ошибка</string>
+    <string name="vault_error_no_config">Хранилище не настроено: укажите адрес в разделе «Хранилище»</string>
+    <string name="vault_error_source_gone">Файл недоступен: источник пропал</string>
+    <string name="vault_error_source_lost">Источник недоступен после перезапуска</string>
+
+    <!-- Даты и размеры (множественные формы) -->
+    <plurals name="files_count">
+        <item quantity="one">%1$d файл</item>
+        <item quantity="few">%1$d файла</item>
+        <item quantity="many">%1$d файлов</item>
+        <item quantity="other">%1$d файлов</item>
+    </plurals>
 </resources>

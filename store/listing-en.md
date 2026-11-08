@@ -76,6 +76,7 @@ file transfer over Wi-Fi, send files from phone to computer, local network, HTTP
 
 ## Language note
 
-The app and its web pages currently ship in Russian. The English screenshots are
-localized mockups prepared for an English listing; localize the interface before
-publishing this card. See `store/README.md`.
+The Android UI is localized: Russian in `values`, English in `values-en`, and the
+app follows the system language. The web pages are still Russian-only. The English
+screenshots are localized mockups prepared for an English listing; localize the
+web pages before publishing this card. See `store/README.md`.

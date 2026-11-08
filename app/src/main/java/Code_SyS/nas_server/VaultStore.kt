@@ -1,6 +1,7 @@
 package Code_SyS.nas_server
 
 import android.content.Context
+import androidx.core.content.edit
 
 /**
  * Запись в хранилище (WebDAV): файл, поставленный в очередь выгрузки.
@@ -50,9 +51,7 @@ object VaultStore {
 
     fun save(context: Context, records: List<VaultRecord>) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY, VaultCodec.encode(records.takeLast(MAX)))
-            .apply()
+            .edit { putString(KEY, VaultCodec.encode(records.takeLast(MAX))) }
     }
 }
 
@@ -143,20 +142,52 @@ internal object VaultCodec {
     }
 }
 
+/** Вид ошибки выгрузки: подпись для экрана выбирается по нему. */
+internal enum class VaultFailure { AUTH, NOT_FOUND, TOO_LARGE, NO_SPACE, NO_CONNECTION, HTTP, UNKNOWN }
+
 /**
- * Перевод ошибок выгрузки в короткие подписи. Чистая функция — видна в тестах.
+ * Разобранная ошибка выгрузки: вид, HTTP-код и техническая деталь.
+ * Деталь не переводится — это сообщение сети или сервера.
+ */
+internal data class VaultError(
+    val failure: VaultFailure,
+    val code: Int? = null,
+    val detail: String? = null,
+)
+
+/**
+ * Разбор ошибок выгрузки: [classify] — чистая функция (JVM-тесты),
+ * подпись собирается из строковых ресурсов в [describe].
  */
 internal object VaultErrors {
 
-    fun describe(error: Throwable?): String = when (error) {
+    fun classify(error: Throwable?): VaultError = when (error) {
         is WebDavHttpException -> when (error.code) {
-            401, 403 -> "Хранилище не пустило: проверьте логин и пароль"
-            404, 409, 412, 423 -> "Папка не найдена на сервере"
-            413 -> "Файл больше, чем принимает сервер"
-            507 -> "На хранилище нет места"
-            else -> "Сервер ответил ${error.code}"
+            401, 403 -> VaultError(VaultFailure.AUTH)
+            404, 409, 412, 423 -> VaultError(VaultFailure.NOT_FOUND)
+            413 -> VaultError(VaultFailure.TOO_LARGE)
+            507 -> VaultError(VaultFailure.NO_SPACE)
+            else -> VaultError(VaultFailure.HTTP, code = error.code)
         }
-        is java.io.IOException -> "Нет связи с хранилищем: ${error.message ?: "обрыв сети"}"
-        else -> error?.message ?: "Неизвестная ошибка"
+        is java.io.IOException -> VaultError(VaultFailure.NO_CONNECTION, detail = error.message)
+        else -> VaultError(VaultFailure.UNKNOWN, detail = error?.message)
+    }
+
+    fun describe(context: Context, error: Throwable?): String {
+        val parsed = classify(error)
+        return when (parsed.failure) {
+            VaultFailure.AUTH -> context.getString(R.string.vault_error_auth)
+            VaultFailure.NOT_FOUND -> context.getString(R.string.vault_error_not_found)
+            VaultFailure.TOO_LARGE -> context.getString(R.string.vault_error_too_large)
+            VaultFailure.NO_SPACE -> context.getString(R.string.vault_error_no_space)
+            VaultFailure.HTTP -> context.getString(R.string.vault_error_http, parsed.code ?: 0)
+            VaultFailure.NO_CONNECTION -> context.getString(
+                R.string.vault_error_no_connection,
+                parsed.detail?.takeIf { it.isNotBlank() }
+                    ?: context.getString(R.string.vault_error_network_broken),
+            )
+            VaultFailure.UNKNOWN -> parsed.detail?.takeIf { it.isNotBlank() }
+                ?: context.getString(R.string.vault_error_unknown)
+        }
     }
 }

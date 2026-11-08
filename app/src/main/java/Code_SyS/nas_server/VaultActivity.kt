@@ -1,5 +1,6 @@
 package Code_SyS.nas_server
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -24,6 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -97,7 +102,8 @@ fun VaultScreen(
     sharedFiles: List<SharedFile> = emptyList(),
     onSharedHandled: () -> Unit = {},
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val resources = LocalResources.current
 
     var records by remember { mutableStateOf<List<VaultRecord>>(emptyList()) }
     var activeUpload by remember { mutableStateOf<Pair<String?, Long>>(null to 0L) }
@@ -106,6 +112,7 @@ fun VaultScreen(
     var passwordText by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var checkResult by remember { mutableStateOf<String?>(null) }
+    var checkOk by remember { mutableStateOf(false) }
     var autoConfig by remember { mutableStateOf(AutoArchiveSettings.load(context)) }
 
     LaunchedEffect(Unit) {
@@ -130,25 +137,30 @@ fun VaultScreen(
     if (sharedFiles.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = onSharedHandled,
-            title = { Text("Отправить в хранилище?") },
+            title = { Text(stringResource(R.string.archive_dialog_title)) },
             text = {
+                val hint = stringResource(R.string.archive_shared_hint)
                 Text(
                     if (sharedFiles.size == 1) {
                         sharedFiles[0].name
                     } else {
-                        "Файлов: ${sharedFiles.size}"
-                    } + "\nФайлы выгрузятся на сервер, когда он доступен."
+                        stringResource(R.string.archive_files_count, sharedFiles.size)
+                    } + "\n\n" + hint
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     sharedFiles.forEach { ArchiveManager.queueShared(context, it) }
-                    Toast.makeText(context, "В очереди: ${sharedFiles.size}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        resources.getString(R.string.vault_queue_toast_shared, sharedFiles.size),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                     onSharedHandled()
-                }) { Text("Отправить") }
+                }) { Text(stringResource(R.string.send_button)) }
             },
             dismissButton = {
-                TextButton(onClick = onSharedHandled) { Text("Отмена") }
+                TextButton(onClick = onSharedHandled) { Text(stringResource(R.string.cancel_button)) }
             },
         )
     }
@@ -163,7 +175,7 @@ fun VaultScreen(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-                    Text("← Назад", fontSize = 13.sp)
+                    Text(stringResource(R.string.back_button), fontSize = 13.sp)
                 }
                 Spacer(modifier = Modifier.weight(1f))
             }
@@ -176,12 +188,13 @@ fun VaultScreen(
                 isComplete = ArchiveManager.isConfigured(context),
                 checking = checking,
                 checkResult = checkResult,
+                checkOk = checkOk,
                 onUrl = { urlText = it },
                 onUser = { userText = it },
-                onPassword = { passwordText = it; checkResult = null },
+                onPassword = { passwordText = it; checkResult = null; checkOk = false },
                 onTest = {
                     if (urlText.isBlank()) {
-                        checkResult = "Сначала укажите адрес папки"
+                        checkResult = resources.getString(R.string.check_needs_address)
                     } else {
                         checking = true
                         checkResult = null
@@ -193,8 +206,14 @@ fun VaultScreen(
                             val result = WebDavClient(config).testConnection()
                             checking = false
                             checkResult = result.fold(
-                                onSuccess = { "Сервер отвечает" },
-                                onFailure = { VaultErrors.describe(it) },
+                                onSuccess = {
+                                    checkOk = true
+                                    resources.getString(R.string.check_success)
+                                },
+                                onFailure = {
+                                    checkOk = false
+                                    VaultErrors.describe(context, it)
+                                },
                             )
                         }.start()
                     }
@@ -207,10 +226,18 @@ fun VaultScreen(
                             ?: ArchiveManager.config(context).password,
                     )
                     if (!config.isComplete()) {
-                        Toast.makeText(context, "Адрес должен начинаться с http://", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            resources.getString(R.string.address_must_http),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     } else {
                         ArchiveManager.saveConfig(context, config)
-                        Toast.makeText(context, "Хранилище сохранено", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            resources.getString(R.string.vault_saved),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 },
             )
@@ -236,14 +263,18 @@ fun VaultScreen(
             Spacer(modifier = Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Выгрузки",
+                    text = stringResource(R.string.vault_uploads_header),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
                 if (records.any { it.status == VaultRecord.Status.DONE }) {
                     TextButton(onClick = { ArchiveManager.clearUploaded(context) }) {
-                        Text("Очистить", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            stringResource(R.string.vault_clear),
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -253,8 +284,8 @@ fun VaultScreen(
         if (records.isEmpty()) {
             item {
                 VaultEmpty(
-                    title = "Пока ничего не выгружалось",
-                    hint = "Нажмите «В хранилище» у файла на главном экране или отправьте файл через «Поделиться» → LanDrop",
+                    title = stringResource(R.string.vault_empty_title),
+                    hint = stringResource(R.string.vault_empty_hint),
                 )
             }
         } else {
@@ -278,6 +309,7 @@ private fun VaultConfigCard(
     isComplete: Boolean,
     checking: Boolean,
     checkResult: String?,
+    checkOk: Boolean,
     onUrl: (String) -> Unit,
     onUser: (String) -> Unit,
     onPassword: (String) -> Unit,
@@ -293,14 +325,14 @@ private fun VaultConfigCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "ДОЛГОЕ ХРАНЕНИЕ",
+                text = stringResource(R.string.vault_section),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 1.sp,
                 color = scheme.onSurfaceVariant,
             )
             Text(
-                text = "WebDAV-папка на вашем компьютере, NAS или роутере. Файлы копируются туда и остаются, даже если телефон и все его копии пропадут.",
+                text = stringResource(R.string.vault_desc_long),
                 fontSize = 11.5.sp,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
@@ -310,8 +342,8 @@ private fun VaultConfigCard(
             OutlinedTextField(
                 value = urlText,
                 onValueChange = onUrl,
-                label = { Text("Адрес папки", fontSize = 12.sp) },
-                placeholder = { Text("http://192.168.1.10:5005/landrop", fontSize = 13.sp) },
+                label = { Text(stringResource(R.string.folder_address), fontSize = 12.sp) },
+                placeholder = { Text(stringResource(R.string.folder_address_example), fontSize = 13.sp) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -325,7 +357,7 @@ private fun VaultConfigCard(
             OutlinedTextField(
                 value = userText,
                 onValueChange = onUser,
-                label = { Text("Логин", fontSize = 12.sp) },
+                label = { Text(stringResource(R.string.login_label), fontSize = 12.sp) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -340,7 +372,8 @@ private fun VaultConfigCard(
                 onValueChange = onPassword,
                 label = {
                     Text(
-                        "Пароль" + if (isComplete) " (введён)" else "",
+                        stringResource(R.string.password_label) +
+                            if (isComplete) stringResource(R.string.password_entered) else "",
                         fontSize = 12.sp,
                     )
                 },
@@ -368,7 +401,7 @@ private fun VaultConfigCard(
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(
-                        if (checking) "Проверяем…" else "Проверить",
+                        if (checking) stringResource(R.string.checking) else stringResource(R.string.check_button),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -380,7 +413,7 @@ private fun VaultConfigCard(
                     border = BorderStroke(1.dp, scheme.outline.copy(alpha = .6f)),
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Сохранить", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.save_button_vault), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             if (checkResult != null) {
@@ -393,7 +426,7 @@ private fun VaultConfigCard(
                             .size(8.dp)
                             .clip(CircleShape)
                             .background(
-                                if (checkResult == "Сервер отвечает") Color(0xFF3DDC97)
+                                if (checkOk) Color(0xFF3DDC97)
                                 else Color(0xFFFF8A8A)
                             )
                     )
@@ -424,12 +457,20 @@ private fun AutoArchiveCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Автоархивация",
+                        text = stringResource(R.string.auto_archive),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = if (!config.enabled) "Выключена" else "Старше ${config.maxAgeDays} дн.: выгрузить и удалить с телефона",
+                        text = if (!config.enabled) {
+                            stringResource(R.string.auto_archive_disabled)
+                        } else {
+                            pluralStringResource(
+                                R.plurals.auto_archive_enabled,
+                                config.maxAgeDays,
+                                config.maxAgeDays,
+                            )
+                        },
                         fontSize = 11.sp,
                         color = scheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),
@@ -462,9 +503,9 @@ private fun AutoArchiveCard(
             }
             Text(
                 text = if (storageReady) {
-                    "Работает при запущенном приложении: старые файлы попадут в очередь"
+                    stringResource(R.string.vault_working)
                 } else {
-                    "Сначала настройте хранилище выше"
+                    stringResource(R.string.auto_archive_desc_off)
                 },
                 fontSize = 11.sp,
                 color = if (storageReady) scheme.onSurfaceVariant else Color(0xFFD96A6A),
@@ -487,7 +528,7 @@ private fun AutoAgeChip(current: Int, choice: Int, onConfigChange: (AutoArchiveC
         ),
     ) {
         Text(
-            text = "$choice дн.",
+            text = pluralStringResource(R.plurals.auto_age_days, choice, choice),
             fontSize = 12.sp,
             color = if (selected) scheme.primary else scheme.onSurfaceVariant,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -498,10 +539,10 @@ private fun AutoAgeChip(current: Int, choice: Int, onConfigChange: (AutoArchiveC
     }
 }
 
-private fun vaultStatusText(record: VaultRecord): String = when (record.status) {
-    VaultRecord.Status.QUEUED -> "В очереди"
-    VaultRecord.Status.UPLOADING -> "Выгружается…"
-    VaultRecord.Status.DONE -> "На сервере"
+private fun vaultStatusText(record: VaultRecord, context: Context): String = when (record.status) {
+    VaultRecord.Status.QUEUED -> context.getString(R.string.vault_status_queued)
+    VaultRecord.Status.UPLOADING -> context.getString(R.string.vault_status_uploading)
+    VaultRecord.Status.DONE -> context.getString(R.string.vault_status_done)
     VaultRecord.Status.ERROR -> record.lastError
 }
 
@@ -513,6 +554,8 @@ private fun VaultRecordRow(
     onDismiss: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val resources = LocalResources.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -526,9 +569,9 @@ private fun VaultRecordRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val meta = " · ${FileFormat.size(record.size)} · ${FileFormat.date(record.archivedAt)}"
+                val meta = " · ${FileFormat.size(resources, record.size)} · ${FileFormat.date(record.archivedAt)}"
                 Text(
-                    text = vaultStatusText(record),
+                    text = vaultStatusText(record, context),
                     fontSize = 11.5.sp,
                     color = when (record.status) {
                         VaultRecord.Status.DONE -> Color(0xFF2FA377)
@@ -544,7 +587,7 @@ private fun VaultRecordRow(
             }
             if (record.status == VaultRecord.Status.ERROR && record.sourcePath.isNotEmpty()) {
                 TextButton(onClick = onRetry) {
-                    Text("Повтор", fontSize = 11.5.sp)
+                    Text(stringResource(R.string.retry), fontSize = 11.5.sp)
                 }
             }
             TextButton(onClick = onDismiss) {
