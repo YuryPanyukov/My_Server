@@ -1,6 +1,5 @@
 package Code_SyS.nas_server
 
-import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -24,18 +23,23 @@ class FileReceiverService : Service() {
         const val ACTION_START = "Code_SyS.nas_server.ACTION_START"
         const val ACTION_STOP = "Code_SyS.nas_server.ACTION_STOP"
 
-        /** Запущен ли сейчас сервис приёма файлов. */
-        fun isRunning(context: Context): Boolean {
-            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            val services = manager.getRunningServices(Int.MAX_VALUE)
-            return services.any { service ->
-                service.service.className == "Code_SyS.nas_server.FileReceiverService"
-            }
-        }
+        /**
+         * Запущен ли сейчас сервис приёма файлов. Состояние ведётся в этом
+         * процессе: ActivityManager.getRunningServices устарел и всё равно
+         * отдаёт только сервисы своего приложения.
+         */
+        @Volatile
+        private var serverRunning = false
+
+        fun isRunning(): Boolean = serverRunning
     }
 
-    @Volatile
-    private var isRunning = false
+    /** Состояние сервиса хранится в companion, чтобы его видели и Activity. */
+    private var isRunning: Boolean
+        get() = serverRunning
+        set(value) {
+            serverRunning = value
+        }
     private var server: FileReceiverServer? = null
 
     /** Копирование в Галерею не должно задерживать ответ клиенту. */

@@ -39,7 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -303,7 +303,7 @@ fun FileReceiverScreen(
     LaunchedEffect(Unit) {
         while (isActive) {
             try {
-                isServiceRunning = FileReceiverService.isRunning(context)
+                isServiceRunning = FileReceiverService.isRunning()
                 val ip = NetworkUtils.getWifiIpAddress(context)
                 ipText = ipLabelText + " ${ip ?: ipUnavailableText}"
                 httpUrlText = if (ip != null) browserLabelText + " http://$ip:${Protocol.PORT}" else browserLabelText + " —"

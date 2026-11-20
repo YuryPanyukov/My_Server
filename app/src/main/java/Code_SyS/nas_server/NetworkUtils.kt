@@ -2,8 +2,8 @@ package Code_SyS.nas_server
 
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.NetworkInfo
-import android.net.wifi.WifiManager
+import android.net.NetworkCapabilities
+import java.net.Inet4Address
 
 object NetworkUtils {
 
@@ -16,18 +16,30 @@ object NetworkUtils {
         return "${ipInt and 0xFF}.${ipInt shr 8 and 0xFF}.${ipInt shr 16 and 0xFF}.${ipInt shr 24 and 0xFF}"
     }
 
+    /**
+     * IPv4-адрес Wi-Fi интерфейса из активной сети. Возвращает null, если
+     * активная сеть не Wi-Fi или адрес ещё не выдан.
+     */
     fun getWifiIpAddress(context: Context): String? {
-        val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? ConnectivityManager
             ?: return null
-        val connectionInfo = wifiManager.connectionInfo
-        return formatIp(connectionInfo.ipAddress)
+        val network = connectivityManager.activeNetwork ?: return null
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return null
+        if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null
+        val linkProperties = connectivityManager.getLinkProperties(network) ?: return null
+        return linkProperties.linkAddresses
+            .map { it.address }
+            .firstOrNull { it is Inet4Address && !it.isLoopbackAddress }
+            ?.hostAddress
     }
 
     fun isWifiConnected(context: Context): Boolean {
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
             as? ConnectivityManager
             ?: return false
-        val network: NetworkInfo? = connectivityManager.activeNetworkInfo
-        return network != null && network.type == ConnectivityManager.TYPE_WIFI && network.isConnected
+        val network = connectivityManager.activeNetwork ?: return false
+        return connectivityManager.getNetworkCapabilities(network)
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
     }
 }
