@@ -198,10 +198,10 @@ fun FileReceiverScreen(
 ) {
     val context = LocalContext.current
     // Ресурсы читаем через Compose: иначе смена конфигурации (язык) оставляет
-    // в колбэках устаревшие строки, на что и ругается lint.
+    // в обратных вызовах устаревшие строки, на что и ругается lint.
     val resources = LocalResources.current
 
-    // Строки читаются один раз в композабельной области: внутри лямбд и
+    // Строки читаются один раз в Compose-плоскости: внутри лямбд и
     // LaunchedEffect stringResource вызвать нельзя.
     val browserLabelText = stringResource(R.string.browser_label)
     val galleryLabelText = stringResource(R.string.gallery_label)
