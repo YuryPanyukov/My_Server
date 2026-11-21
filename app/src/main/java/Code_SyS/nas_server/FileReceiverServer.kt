@@ -39,6 +39,9 @@ import java.util.concurrent.TimeUnit
  * @param folderSaver запись файла в выбранную папку хранилища
  * @param mediaSources источники галереи: принятые файлы и медиатека телефона
  * @param fileThumbnailer превью принятого файла для списка на главной странице
+ *
+ * PIN-защита читается из [PinAuthCodec] на каждый запрос, поэтому здесь нет
+ * отдельного параметра: смена PIN в приложении действует без перезапуска сервера.
  */
 class FileReceiverServer(
     private val port: Int = Protocol.PORT,
@@ -162,10 +165,20 @@ class FileReceiverServer(
         return HTTP_METHOD_PREFIXES.any { head.startsWith(it) }
     }
 
-    private fun handleBinary(input: InputStream, outputStream: OutputStream) {
+    private fun handleBinary(input: PushbackInputStream, outputStream: OutputStream) {
         val dataIn = DataInputStream(input)
         val dataOut = DataOutputStream(outputStream)
         val success = try {
+            // authorizeFromPushback сам читает живой конфиг и возвращает
+            // authenticated = true, когда PIN выключен или не задан.
+            val answer = PinAuthSettings.authorizeFromPushback(input, logger)
+            if (!answer.authenticated) {
+                logger("Бинарный клиент не прошедший PIN: ${answer.reason}")
+                // Ответ даём сразу: иначе клиент ждёт до закрытия сокета.
+                dataOut.writeBoolean(false)
+                dataOut.flush()
+                return
+            }
             val header = Protocol.readHeader(dataIn)
             logger("Приём: ${header.fileName} (${header.fileSize} байт)")
             val savedFile = saver(header.fileName, header.fileSize, dataIn)

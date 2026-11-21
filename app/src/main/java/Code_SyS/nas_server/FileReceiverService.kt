@@ -102,6 +102,11 @@ class FileReceiverService : Service() {
         // экрана и сервиса.
         AccessModeStore.load(this)
 
+        // PIN читается из настроек и подключается к сервису, который им владеет:
+        // сервер опирается на PinAuthCodec.currentConfig() и не лезет в prefs сам.
+        val pinConfig = PinAuthSettings.load(this)
+        PinAuthCodec.update(pinConfig)
+
         val newServer = FileReceiverServer(
             port = Protocol.PORT,
             bindAddress = bindAddress,
@@ -147,6 +152,13 @@ class FileReceiverService : Service() {
             stopForegroundCompat()
             stopSelf()
             return
+        }
+
+        // Если PIN включён, но код не задан — сервер будет отвергать все подключения.
+        // Это нормально для состояния «настройка включена, но пользователь ещё не задал PIN»:
+        // пользователь увидит это на экране и либо задаст PIN, либо выключит защиту.
+        if (pinConfig.enabled && !pinConfig.hasCode) {
+            Log.w(TAG, "PIN включён, но код не задан — подключения будут отвергнуты")
         }
 
         server = newServer

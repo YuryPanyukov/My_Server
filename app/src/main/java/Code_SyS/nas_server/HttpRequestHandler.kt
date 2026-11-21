@@ -7,9 +7,11 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -21,6 +23,9 @@ import java.util.zip.ZipOutputStream
  * Маршруты:
  *   `GET /`             — страница загрузки и список принятых файлов;
  *   `GET /health`       — проверка доступности, отвечает `OK`;
+ *   `GET /pin`          — форма ввода PIN (при включённой защите);
+ *   `POST /pin-verify`  — проверка кода и выдача сессионной cookie;
+ *   `GET /pin-check`    — состояние защиты и авторизации в JSON;
  *   `GET /open`         — страница-мостик из QR: приложение или веб-интерфейс;
  *   `GET /api/files`    — содержимое папки (файлы и вложенные папки) в JSON;
  *   `GET /api/folders`  — все папки хранилища (для перемещения);
@@ -49,6 +54,13 @@ import java.util.zip.ZipOutputStream
  *   `POST /upload?name=<имя>` — тело запроса целиком сохраняется в файл;
  *   `PUT /upload?name=<имя>`  — то же самое, совместимо с `curl --upload-file`.
  *
+ * Если сервер защищён PIN, браузер получает страницу входа `/pin`, а успешный
+ * ввод кода выдаёт сессионную cookie. Сессия привязана к коду и живёт до смены
+ * PIN или истечения срока; API без cookie получают 403. `/health` и `/pin-check`
+ * открыты всегда — по ним клиент понимает, что от него требуется PIN.
+ * Конфигурация читается на каждый запрос из [PinAuthCodec], поэтому смена PIN
+ * в приложении действует сразу, без перезапуска сервера.
+ *
  * Класс не зависит от Android API и проверяется JVM-тестами.
  *
  * @param saver запись файла в корень; тот же обратный вызов, что и у бинарного протокола
@@ -76,6 +88,11 @@ class HttpRequestHandler(
         val headers: Map<String, String>,
     )
 
+    /** Сессия браузера, выданная после верного PIN. */
+    private class Session(val code: String?, val expiresAt: Long)
+
+    private val sessions = ConcurrentHashMap<String, Session>()
+
     fun handle(input: InputStream, output: OutputStream) {
         val buffered = BufferedInputStream(input, Protocol.BUFFER_SIZE)
 
@@ -97,6 +114,31 @@ class HttpRequestHandler(
     }
 
     private fun route(request: Request, body: InputStream, output: OutputStream) {
+        val pinAuth = PinAuthCodec.currentConfig()
+
+        if (request.method == "POST" && request.path == PIN_VERIFY_PATH) {
+            verifyPin(request, body, output, pinAuth)
+            return
+        }
+        if (request.method == "GET" || request.method == "HEAD") {
+            val headOnly = request.method == "HEAD"
+            if (request.path == "/pin-check") {
+                writeResponse(
+                    output, 200, "OK", CONTENT_TYPE_JSON,
+                    pinCheckJson(request, pinAuth).toByteArray(), includeBody = !headOnly
+                )
+                return
+            }
+            if (request.path == PIN_PATH) {
+                servePinPage(output, sanitizeNext(request.query["next"]), null, 200, headOnly)
+                return
+            }
+        }
+        if (pinAuth.protectionActive && !pinAuth.isPublicPath(request.path) && !isSessionValid(request, pinAuth)) {
+            denyUnauthorized(request, output)
+            return
+        }
+
         when (request.method) {
             "GET", "HEAD" -> {
                 val headOnly = request.method == "HEAD"
@@ -212,30 +254,34 @@ class HttpRequestHandler(
                 }
             }
 
-            "POST", "PUT" -> when (request.path) {
-                "/upload" -> upload(request, body, output)
-                "/folder" -> createFolder(request, output)
-                "/rename" -> renameEntry(request, output)
-                "/move" -> moveEntry(request, output)
-                "/delete" -> deleteMany(request, body, output)
-                "/media/delete" -> deleteMedia(request, output)
-                "/restore" -> restoreEntries(request, body, output)
-                LIBRARY_SAVE_PATH -> saveLibraryItem(request, body, output)
-                LIBRARY_RESET_PATH -> resetLibraryItem(request, output)
-                TRASH_EMPTY_PATH -> emptyTrash(output)
-                else -> notFound(output)
+            "POST", "PUT" -> {
+                when (request.path) {
+                    "/upload" -> upload(request, body, output)
+                    "/folder" -> createFolder(request, output)
+                    "/rename" -> renameEntry(request, output)
+                    "/move" -> moveEntry(request, output)
+                    "/delete" -> deleteMany(request, body, output)
+                    "/media/delete" -> deleteMedia(request, output)
+                    "/restore" -> restoreEntries(request, body, output)
+                    LIBRARY_SAVE_PATH -> saveLibraryItem(request, body, output)
+                    LIBRARY_RESET_PATH -> resetLibraryItem(request, output)
+                    TRASH_EMPTY_PATH -> emptyTrash(output)
+                    else -> notFound(output)
+                }
             }
 
-            "DELETE" -> when {
-                request.path.startsWith(TRASH_PATH_PREFIX) ->
-                    deleteTrashEntry(request.path.removePrefix(TRASH_PATH_PREFIX), output)
+            "DELETE" -> {
+                when {
+                    request.path.startsWith(TRASH_PATH_PREFIX) ->
+                        deleteTrashEntry(request.path.removePrefix(TRASH_PATH_PREFIX), output)
 
-                request.path.startsWith(FILES_PATH_PREFIX) -> {
-                    val recursive = request.query["recursive"] == "1" || request.query["recursive"] == "true"
-                    deleteStoredFile(request.path.removePrefix(FILES_PATH_PREFIX), recursive, output)
+                    request.path.startsWith(FILES_PATH_PREFIX) -> {
+                        val recursive = request.query["recursive"] == "1" || request.query["recursive"] == "true"
+                        deleteStoredFile(request.path.removePrefix(FILES_PATH_PREFIX), recursive, output)
+                    }
+
+                    else -> notFound(output)
                 }
-
-                else -> notFound(output)
             }
 
             "OPTIONS" -> writeResponse(
@@ -252,6 +298,232 @@ class HttpRequestHandler(
 
     private fun notFound(output: OutputStream) {
         writeResponse(output, 404, "Not Found", CONTENT_TYPE_TEXT, "Not found".toByteArray())
+    }
+
+    /**
+     * Запрос без действующей сессии: браузер, который ждёт HTML, отправляем на
+     * форму входа; API и загрузки получают 403 JSON.
+     */
+    private fun denyUnauthorized(request: Request, output: OutputStream) {
+        val wantsHtml = request.headers["accept"]?.contains("text/html", ignoreCase = true) == true
+        if (wantsHtml && (request.method == "GET" || request.method == "HEAD")) {
+            val next = request.path + encodeQuery(request.query)
+            writeResponse(
+                output, 303, "See Other", null, ByteArray(0),
+                includeBody = request.method != "HEAD",
+                extraHeaders = listOf("Location" to (PIN_PATH + "?next=" + percentEncode(next))),
+            )
+        } else {
+            pinDenied(output)
+        }
+    }
+
+    /** PIN-защита отвергла запрос без сессии. */
+    private fun pinDenied(output: OutputStream) {
+        writeResponse(
+            output, 403, "Forbidden", CONTENT_TYPE_JSON,
+            errorJson("Server is protected by PIN: enter the code in the browser").toByteArray()
+        )
+    }
+
+    private fun pinCheckJson(request: Request, pinAuth: PinAuthConfig): String {
+        val authorized = !pinAuth.protectionActive || isSessionValid(request, pinAuth)
+        return "{\"enabled\":${pinAuth.protectionActive},\"authorized\":$authorized}"
+    }
+
+    /** Сессия действительна, только пока PIN не сменился и не истёк срок. */
+    private fun isSessionValid(request: Request, pinAuth: PinAuthConfig): Boolean {
+        val token = parseCookies(request.headers["cookie"])[SESSION_COOKIE] ?: return false
+        val session = sessions[token] ?: return false
+        if (session.expiresAt <= System.currentTimeMillis() || session.code != pinAuth.code) {
+            sessions.remove(token, session)
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Проверка кода со страницы входа. При успехе выдаёт cookie-сессию и
+     * возвращает браузер на исходную страницу; при ошибке — та же форма с
+     * сообщением, без раскрытия, сколько именно цифр угадано.
+     */
+    private fun verifyPin(request: Request, body: InputStream, output: OutputStream, pinAuth: PinAuthConfig) {
+        val form = parseForm(readLimitedBody(body, request.headers["content-length"]))
+        val next = sanitizeNext(form["next"] ?: request.query["next"])
+
+        if (!pinAuth.protectionActive) {
+            redirectTo(output, next)
+            return
+        }
+
+        when (val result = PinAuthCodec.verify(form["code"].orEmpty())) {
+            PinAttemptResult.Match -> {
+                val token = newSessionToken()
+                pruneSessions()
+                sessions[token] = Session(pinAuth.code, System.currentTimeMillis() + SESSION_TTL_MS)
+                logger("HTTP: PIN принят, выдана сессия")
+                writeResponse(
+                    output, 303, "See Other", null, ByteArray(0),
+                    extraHeaders = listOf(
+                        "Location" to next,
+                        "Set-Cookie" to "$SESSION_COOKIE=$token; Path=/; " +
+                            "Max-Age=${SESSION_TTL_MS / 1000}; HttpOnly; SameSite=Lax",
+                    ),
+                )
+            }
+
+            is PinAttemptResult.Wrong -> {
+                logger("HTTP: неверный PIN (осталось попыток: ${result.remaining})")
+                servePinPage(
+                    output, next,
+                    "Неверный PIN. Осталось попыток: ${result.remaining}",
+                    401, headOnly = false,
+                )
+            }
+
+            is PinAttemptResult.Blocked -> {
+                logger("HTTP: перебор PIN, вход заблокирован")
+                servePinPage(
+                    output, next,
+                    "Слишком много неверных попыток. Подождите ${result.retryAfterMs / 1000} с.",
+                    429, headOnly = false,
+                )
+            }
+        }
+    }
+
+    private fun servePinPage(
+        output: OutputStream,
+        next: String,
+        error: String?,
+        status: Int,
+        headOnly: Boolean,
+    ) {
+        writeResponse(
+            output, status, if (status == 200) "OK" else "Unauthorized",
+            CONTENT_TYPE_HTML, loginPageHtml(next, error).toByteArray(), includeBody = !headOnly,
+        )
+    }
+
+    private fun redirectTo(output: OutputStream, location: String) {
+        writeResponse(
+            output, 303, "See Other", null, ByteArray(0),
+            extraHeaders = listOf("Location" to location),
+        )
+    }
+
+    /**
+     * Только локальные пути: `//evil.example` и абсолютные URL не принимаем,
+     * а управляющие символы отбрасываем — значение уходит в заголовок `Location`.
+     */
+    private fun sanitizeNext(value: String?): String {
+        val candidate = value?.trim().orEmpty()
+        if (!candidate.startsWith("/") || candidate.startsWith("//")) return "/"
+        if (candidate.any { it.code < 0x20 || it.code == 0x7F }) return "/"
+        return candidate
+    }
+
+    private fun loginPageHtml(next: String, error: String?): String {
+        val errorBlock = error?.let { "<div class=\"error\">" + htmlEscape(it) + "</div>" }.orEmpty()
+        return """
+            |<!DOCTYPE html>
+            |<html lang="ru"><head>
+            |<meta charset="utf-8">
+            |<meta name="viewport" content="width=device-width, initial-scale=1">
+            |<title>Вход по PIN</title>
+            |<style>
+            |body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#12141a;color:#e8eaf0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+            |.card{width:min(92vw,360px);padding:28px;border-radius:18px;background:#1b1f27;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+            |h1{margin:0 0 6px;font-size:20px}
+            |p{margin:0 0 18px;color:#9aa3b2;font-size:14px}
+            |input{width:100%;box-sizing:border-box;padding:14px;border-radius:12px;border:1px solid #2c3440;background:#12141a;color:#fff;font-size:24px;letter-spacing:.5em;text-align:center}
+            |input:focus{outline:none;border-color:#5b8cff}
+            |button{width:100%;margin-top:14px;padding:13px;border:none;border-radius:12px;background:#4f7cff;color:#fff;font-size:16px;font-weight:600;cursor:pointer}
+            |.error{margin-top:14px;padding:10px 12px;border-radius:10px;background:#3a1d24;color:#ff9aa8;font-size:14px}
+            |</style></head><body>
+            |<form class="card" method="post" action="$PIN_VERIFY_PATH">
+            |<h1>Введите PIN</h1>
+            |<p>Сервер просит 4-значный код из приложения.</p>
+            |<input name="code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" autofocus required aria-label="PIN">
+            |$errorBlock
+            |<input type="hidden" name="next" value="${htmlEscape(next)}">
+            |<button type="submit">Войти</button>
+            |</form></body></html>
+        """.trimMargin()
+    }
+
+    /** Тело формы читаем не больше лимита: запрос без `Content-Length` тоже не должен нас завалить. */
+    private fun readLimitedBody(body: InputStream, contentLength: String?): String {
+        val requested = contentLength?.toLongOrNull() ?: MAX_PIN_BODY_BYTES.toLong()
+        val limit = requested.coerceIn(0L, MAX_PIN_BODY_BYTES.toLong()).toInt()
+        val data = ByteArray(limit)
+        var filled = 0
+        while (filled < limit) {
+            val read = body.read(data, filled, limit - filled)
+            if (read < 0) break
+            filled += read
+        }
+        return String(data, 0, filled, StandardCharsets.UTF_8)
+    }
+
+    private fun parseForm(body: String): Map<String, String> {
+        val fields = LinkedHashMap<String, String>()
+        for (pair in body.split('&')) {
+            if (pair.isEmpty()) continue
+            val eq = pair.indexOf('=')
+            val key = if (eq >= 0) pair.substring(0, eq) else pair
+            val value = if (eq >= 0) pair.substring(eq + 1) else ""
+            fields[percentDecode(key.replace('+', ' '))] = percentDecode(value.replace('+', ' '))
+        }
+        return fields
+    }
+
+    private fun parseCookies(header: String?): Map<String, String> {
+        if (header.isNullOrEmpty()) return emptyMap()
+        val cookies = HashMap<String, String>()
+        for (part in header.split(';')) {
+            val eq = part.indexOf('=')
+            if (eq <= 0) continue
+            cookies[part.substring(0, eq).trim()] = part.substring(eq + 1).trim()
+        }
+        return cookies
+    }
+
+    private fun encodeQuery(query: Map<String, String>): String {
+        if (query.isEmpty()) return ""
+        return query.entries.joinToString("&", prefix = "?") {
+            percentEncode(it.key) + "=" + percentEncode(it.value)
+        }
+    }
+
+    private fun percentEncode(value: String): String {
+        val builder = StringBuilder(value.length + 8)
+        for (byte in value.toByteArray(StandardCharsets.UTF_8)) {
+            val code = byte.toInt() and 0xFF
+            val ch = code.toChar()
+            if (code < 0x80 && (ch.isLetterOrDigit() || ch in "-._~/")) {
+                builder.append(ch)
+            } else {
+                builder.append('%')
+                builder.append(HEX_DIGITS[code shr 4])
+                builder.append(HEX_DIGITS[code and 0x0F])
+            }
+        }
+        return builder.toString()
+    }
+
+    private fun newSessionToken(): String {
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    private fun pruneSessions() {
+        val now = System.currentTimeMillis()
+        for (key in sessions.keys) {
+            val session = sessions[key] ?: continue
+            if (session.expiresAt <= now) sessions.remove(key, session)
+        }
     }
 
     private fun upload(request: Request, body: InputStream, output: OutputStream) {
@@ -2025,6 +2297,14 @@ class HttpRequestHandler(
         private const val TRASH_EMPTY_PATH = "/trash/empty"
 
         private const val ALLOWED_METHODS = "GET, HEAD, POST, PUT, DELETE, OPTIONS"
+
+        /** Вход по PIN: страница с формой и приём кода. */
+        private const val PIN_PATH = "/pin"
+        private const val PIN_VERIFY_PATH = "/pin-verify"
+        private const val SESSION_COOKIE = "nas_pin"
+        private const val SESSION_TTL_MS = 12 * 60 * 60 * 1000L
+        private const val MAX_PIN_BODY_BYTES = 4 * 1024
+        private const val HEX_DIGITS = "0123456789ABCDEF"
 
         /** Сколько байт списка путей принимаем на массовое удаление. */
         private const val MAX_BULK_DELETE_BYTES = 64 * 1024

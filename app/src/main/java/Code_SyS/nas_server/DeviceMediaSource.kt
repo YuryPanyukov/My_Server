@@ -16,7 +16,7 @@ import java.io.InputStream
  */
 class DeviceMediaSource(private val context: Context) : MediaSource {
 
-    override val key: String = HttpRequestHandler.DEVICE_SOURCE_KEY
+    override val key: String = "device"
     override val title: String = "Фото и видео телефона"
 
     /**

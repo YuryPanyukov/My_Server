@@ -1,6 +1,11 @@
 <resources>
     <string name="app_name">LanDrop</string>
     <string name="app_tagline">Файлы по Wi-Fi</string>
+    <string name="pin_enabled_with_code">Защита PIN: %1$s · сервер защищён</string>
+    <string name="pin_enabled">Защита PIN: включена</string>
+    <string name="pin_disabled">Защита PIN: выключена</string>
+    <string name="pin_settings_button">PIN-код: %1$s — настроить</string>
+    <string name="pin_change_button">Изменить</string>
     <string name="notification_channel_name">LanDrop</string>
     <string name="notification_channel_desc">Приём файлов по Wi-Fi</string>
 

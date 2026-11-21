@@ -1253,7 +1253,7 @@ private fun GalleryTab(
                     // зритель, а не телефон-хост. Незнакомый источник — как прислали.
                     val label = when (source.key) {
                         "received" -> androidx.compose.ui.res.stringResource(R.string.media_source_received)
-                        HttpRequestHandler.DEVICE_SOURCE_KEY ->
+                        AccessModeFilter.DEVICE_SOURCE_KEY ->
                             androidx.compose.ui.res.stringResource(R.string.media_source_device)
                         else -> source.title
                     }
