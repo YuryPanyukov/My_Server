@@ -86,7 +86,7 @@ class AutoArchiveTest {
 
     @Test
     fun `directories and missing files are skipped`() {
-        val dir = File(System.getProperty("java.io.tmpdir"))
+        val dir = File(requireNotNull(System.getProperty("java.io.tmpdir")))
         val gone = File(dir, "autotest-missing-${System.nanoTime()}.txt")
         val old = fileAged(30 * day, "old")
 

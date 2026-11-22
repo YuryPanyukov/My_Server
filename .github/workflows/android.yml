@@ -1,0 +1,45 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Версия JDK совпадает с gradle/gradle-daemon-jvm.properties.
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Линт падает на ошибках (например, MissingTranslation), поэтому CI
+      # ловит забытые строки раньше, чем они уедут в релиз.
+      - name: Lint and unit tests
+        run: ./gradlew lintDebug testDebugUnitTest --console=plain
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            app/build/reports/lint-results-debug.html
+            app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore

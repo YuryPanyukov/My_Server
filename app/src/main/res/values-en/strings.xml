@@ -1,0 +1,351 @@
+<resources>
+    <string name="app_name">LanDrop</string>
+    <string name="app_tagline">Files over Wi-Fi</string>
+    <string name="pin_enabled_with_code">PIN protection: %1$s · server is protected</string>
+    <string name="pin_enabled">PIN protection: enabled</string>
+    <string name="pin_disabled">PIN protection: disabled</string>
+    <string name="pin_settings_button">PIN code: %1$s — configure</string>
+    <string name="pin_change_button">Change</string>
+    <string name="notification_channel_name">LanDrop</string>
+    <string name="notification_channel_desc">Receive files over Wi-Fi</string>
+
+    <!-- Server status -->
+    <string name="server_on">Server enabled</string>
+    <string name="server_off">Server disabled</string>
+    <string name="status_running">running</string>
+    <string name="status_stopped">stopped</string>
+    <string name="status_hint_running">Waiting for connection in Wi-Fi</string>
+    <string name="status_hint_stopped">Enable to accept files</string>
+    <string name="error_ip_resolve">Failed to determine IP address</string>
+    <string name="error_no_wifi">No Wi-Fi connection</string>
+    <string name="ip_unavailable">unavailable</string>
+    <string name="no_wifi">No Wi-Fi</string>
+    <string name="ip_label">IP:</string>
+    <string name="browser_label">Browser:</string>
+    <string name="gallery_label">Gallery:</string>
+    <string name="port_label">Port %1$d · your Wi-Fi network only</string>
+    <string name="qr_camera_hint">Point camera: app or this page will open</string>
+    <string name="qr_server_hint">QR will work when you enable the server</string>
+    <string name="qr_code_description">QR code for connecting</string>
+    <string name="open_page">Open page</string>
+    <string name="address_section">BROWSER ADDRESS</string>
+
+    <!-- Gallery and library -->
+    <string name="gallery">Gallery</string>
+    <string name="library">Library</string>
+
+    <!-- Connect to phone -->
+    <string name="connect_section">CONNECT TO PHONE</string>
+    <string name="connect_desc">View another phone\'s gallery or send files there.</string>
+    <string name="scan_qr">Scan QR</string>
+    <string name="no_camera_access">No camera access: QR cannot be scanned</string>
+    <string name="grant_camera">Allow</string>
+    <string name="open_host">open ›</string>
+    <string name="recent_hosts_section">RECENT PHONES</string>
+    <string name="send_wifi">Send over Wi-Fi</string>
+    <string name="send_to_phone">Recent phone</string>
+    <string name="send_to_phone_desc">Appears after first QR connection</string>
+
+    <!-- Copy to Gallery -->
+    <string name="gallery_copy_title">Photos and videos to Gallery</string>
+    <string name="gallery_copy_desc">Copy received snapshots to Pictures/LanDrop</string>
+
+    <!-- Media access -->
+    <string name="media_access_title">Gallery without photo access</string>
+    <string name="media_access_desc">Grant access to open photos and videos from the phone in the browser.</string>
+    <string name="grant_media_access">Grant access</string>
+
+    <!-- Delete confirmation -->
+    <string name="delete_confirm_title">Confirm deletion</string>
+    <string name="delete_confirm_single">Browser asks to delete a photo or video from the phone. Android requires confirmation.</string>
+    <plurals name="delete_confirm_plural">
+        <item quantity="one">Browser asks to delete %1$d item. Android requires confirmation.</item>
+        <item quantity="other">Browser asks to delete %1$d items. Android requires confirmation.</item>
+    </plurals>
+    <string name="delete_confirm_button">Confirm deletion</string>
+
+    <!-- Files and folders -->
+    <string name="received_files">Received files</string>
+    <string name="add_folder">+ Folder</string>
+    <string name="search_placeholder">Search files and folders</string>
+    <string name="no_files">No received files yet</string>
+    <string name="folder_empty">Folder is empty</string>
+    <string name="nothing_found">Nothing found</string>
+    <string name="drop_hint">Drag a file into the browser — it will appear here</string>
+    <string name="upload_hint">Upload a file in the browser — it will appear in this folder</string>
+    <string name="change_query">Change search query</string>
+    <string name="all_files">All files</string>
+    <string name="folder_label">Folder</string>
+
+    <!-- Deletion -->
+    <string name="delete_folder_title">Delete folder?</string>
+    <string name="delete_file_title">Delete file?</string>
+    <plurals name="delete_items_title">
+        <item quantity="one">Delete %1$d item?</item>
+        <item quantity="other">Delete %1$d items?</item>
+    </plurals>
+    <string name="delete_file_body">%1$s\n\nFile will move to trash — it can be restored.</string>
+    <string name="delete_folder_body">Selected files and folders will move to trash. Folder contents will also be hidden.</string>
+    <string name="delete_files_body">Selected files will move to trash — they can be restored.</string>
+    <string name="delete_error_single">Failed to delete item</string>
+    <plurals name="delete_error_plural">
+        <item quantity="one">Failed to delete %1$d item</item>
+        <item quantity="other">Failed to delete %1$d items</item>
+    </plurals>
+    <string name="deleted_single">Deleted: %1$s</string>
+    <string name="deleted_plural">Deleted: %1$d</string>
+    <string name="undo">Undo</string>
+
+    <!-- Create folder -->
+    <string name="create_folder">New folder</string>
+    <string name="create_folder_example">e.g. Vacation</string>
+    <string name="create_button">Create</string>
+    <string name="create_error">Failed to create folder</string>
+
+    <!-- Rename -->
+    <string name="rename_folder">Rename folder</string>
+    <string name="rename_file">Rename file</string>
+    <string name="name_label">Name</string>
+    <string name="save_button">Save</string>
+    <string name="cancel_button">Cancel</string>
+    <string name="rename_error">Failed to rename: name is taken or invalid</string>
+
+    <!-- Move -->
+    <string name="move_title">Move</string>
+    <string name="move_item_single">1 item</string>
+    <string name="move_items_plural">Items: %1$d</string>
+    <string name="move_root">All files (root)</string>
+    <string name="move_button">Move</string>
+
+    <!-- Send to phone -->
+    <string name="send_button">Send</string>
+    <string name="back_button">← Back</string>
+    <string name="archive_shared_hint">Files will be uploaded to the server when it is available.</string>
+    <string name="send_to_phone_title">Send to phone</string>
+    <string name="send_single">Sent to %1$s</string>
+    <plurals name="send_plural">
+        <item quantity="one">Sent %1$d file</item>
+        <item quantity="other">Sent %1$d files</item>
+    </plurals>
+    <string name="sending">Sending…</string>
+
+    <!-- Vault -->
+    <string name="vault_title">Storage</string>
+    <string name="vault_uploads">Pending upload: %1$d</string>
+    <string name="vault_auto">Auto-archive uploading: %1$d</string>
+    <string name="vault_both">Pending upload: %1$d · auto-archive: %2$d</string>
+    <string name="vault_desc">Long-term storage: WebDAV folder on your server</string>
+    <string name="vault_open">open ›</string>
+    <string name="vault_section">LONG-TERM STORAGE</string>
+    <string name="vault_desc_long">WebDAV folder on your computer, NAS, or router. Files are copied there and remain even if the phone and all its copies are lost.</string>
+    <string name="folder_address">Folder address</string>
+    <string name="folder_address_example">http://192.168.1.10:5005/landrop</string>
+    <string name="login_label">Login</string>
+    <string name="password_label">Password</string>
+    <string name="password_entered"> (entered)</string>
+    <string name="checking">Checking…</string>
+    <string name="check_button">Check</string>
+    <string name="save_button_vault">Save</string>
+    <string name="check_needs_address">Specify folder address first</string>
+    <string name="check_success">Server responds</string>
+    <string name="address_must_http">Address must start with http://</string>
+    <string name="vault_saved">Storage saved</string>
+    <string name="vault_uploads_header">Uploads</string>
+    <string name="vault_clear">Clear</string>
+    <string name="vault_empty_title">Nothing uploaded yet</string>
+    <string name="vault_empty_hint">Tap "To storage" on a file on the home screen or send a file via "Share" → LanDrop</string>
+    <string name="vault_status_queued">Queued</string>
+    <string name="vault_status_uploading">Uploading…</string>
+    <string name="vault_status_done">On server</string>
+    <string name="retry">Retry</string>
+    <string name="archive_dialog_title">Send to storage?</string>
+    <string name="archive_files_count">Files: %1$d</string>
+    <string name="archive_file_upload_single">File will upload to your WebDAV server.</string>
+    <string name="archive_file_upload_plural">Files will upload to your WebDAV server.</string>
+    <string name="archive_not_configured">Storage not configured: WebDAV folder address required.</string>
+    <string name="archive_upload_delete">Upload and delete from phone</string>
+    <string name="archive_upload_keep">Upload, keep on phone</string>
+    <string name="archive_configure">Configure storage</string>
+    <string name="vault_queue_toast">Queued for storage</string>
+    <string name="vault_queue_toast_shared">Queued: %1$d</string>
+
+    <!-- Auto-archive -->
+    <string name="auto_archive">Auto-archive</string>
+    <string name="auto_archive_disabled">Disabled</string>
+    <plurals name="auto_archive_enabled">
+        <item quantity="one">Older than %1$d day: upload and delete from phone</item>
+        <item quantity="other">Older than %1$d days: upload and delete from phone</item>
+    </plurals>
+    <string name="auto_archive_desc_off">Configure storage first above</string>
+    <plurals name="auto_age_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <string name="vault_working">Works while app is running: old files will be queued</string>
+
+    <!-- Access mode -->
+    <string name="access_section">WHAT CLIENTS SEE</string>
+    <string name="access_all">All</string>
+    <string name="access_gallery">Gallery</string>
+    <string name="access_selected">Selection…</string>
+    <string name="access_today">Today</string>
+    <string name="access_yesterday">Yesterday</string>
+    <string name="access_date">Date…</string>
+    <string name="access_desc_all">Clients see received files and phone gallery</string>
+    <string name="access_desc_gallery">Only phone gallery visible, received files hidden</string>
+    <string name="access_desc_selected">Only marked files visible (%1$d in folder)</string>
+    <string name="access_desc_today">Files and photos from today visible</string>
+    <string name="access_desc_yesterday">Files and photos received yesterday visible</string>
+    <string name="access_desc_date">Files and photos from selected date visible</string>
+    <string name="selection_title">What clients see</string>
+    <string name="selection_empty">Receive folder is empty</string>
+    <string name="selection_show">Show %1$d</string>
+
+    <!-- File tile -->
+    <string name="selected_count">Selected %1$d</string>
+    <string name="select_all">All</string>
+    <string name="deselect_all">None</string>
+    <string name="rename_action">Rename</string>
+    <string name="move_action">Move</string>
+    <string name="delete_action">Delete</string>
+    <string name="archive_action">Storage</string>
+    <string name="send_to_phone_action">Send to phone</string>
+
+    <!-- Toasts -->
+    <string name="toast_vault_open_error">Failed to open storage</string>
+    <string name="toast_camera_open_error">Failed to open camera</string>
+    <string name="toast_confirm_open_error">Failed to open confirmation</string>
+    <string name="toast_move_error_single">Failed to move item</string>
+    <string name="toast_move_error_plural">Failed to move %1$d</string>
+    <string name="toast_open_file_error">Failed to open file</string>
+    <string name="toast_no_app_for_file">No app for this file type</string>
+    <string name="toast_no_browser">No browser</string>
+
+    <!-- Upload queue -->
+    <string name="upload_sending">Sending</string>
+    <string name="upload_done">Sending complete</string>
+    <string name="upload_close">Close</string>
+    <string name="upload_cancel_all">Cancel all</string>
+    <string name="upload_retry_failed">Retry failed (%1$d)</string>
+    <string name="upload_progress">%1$d of %2$d · %3$d%%</string>
+    <string name="upload_progress_speed"> · %1$s/s</string>
+    <string name="upload_failed">Failed to send</string>
+    <string name="upload_status_queued">skipped</string>
+    <string name="upload_status_cancelled">cancelled</string>
+    <string name="upload_status_error">error</string>
+    <string name="upload_status_done">done</string>
+
+    <!-- QR scanner -->
+    <string name="scan_retry">Retry</string>
+    <string name="scan_close">Close</string>
+    <string name="scan_error">Camera may be in use by another app, or access is denied in phone settings.</string>
+    <string name="scan_settings_hint">Permission is enabled in «Settings → Apps → LanDrop»</string>
+    <string name="scan_not_landrop">This is not a LanDrop address</string>
+    <string name="scan_camera_unavailable">Camera unavailable</string>
+    <string name="scan_camera_failed">Failed to start the camera</string>
+    <string name="scan_title">Point at the QR code</string>
+    <string name="scan_subtitle">Code on the other phone\'s screen</string>
+    <string name="scan_status_scanning">Scanning…</string>
+    <string name="scan_waiting_permission">Requesting camera access…</string>
+    <string name="scan_denied_title">No camera access</string>
+    <string name="scan_denied_subtitle">Permission is needed for the QR scanner</string>
+    <string name="scan_grant_camera">Allow camera access</string>
+    <string name="scan_camera_disabled">Camera is disabled in settings</string>
+    <string name="scan_why_camera">Without the camera the phone cannot scan a QR from the other phone\'s screen.</string>
+    <string name="scan_denied_settings_hint">Permission is off: enable «Camera» under «Permissions» and come back.</string>
+    <string name="scan_grant_access">Allow access</string>
+    <string name="scan_open_settings">Open settings</string>
+
+    <!-- Other screens -->
+    <string name="channel_delete_name">Photo and video deletion</string>
+    <string name="delete_pending_single">Browser asks to delete a photo or video from the phone</string>
+    <plurals name="delete_pending_plural">
+        <item quantity="one">Browser asks to delete %1$d item</item>
+        <item quantity="other">Browser asks to delete %1$d items</item>
+    </plurals>
+    <string name="saving_files">Saving files…</string>
+    <string name="save_files_error">Failed to save files</string>
+    <string name="saved_single">Saved: %1$s</string>
+    <plurals name="saved_plural">
+        <item quantity="one">Saved %1$d file</item>
+        <item quantity="other">Saved %1$d files</item>
+    </plurals>
+    <string name="send_error_unknown_size">Failed to send: unknown file size</string>
+    <string name="send_file">Send file</string>
+    <string name="send_files">Send files</string>
+    <plurals name="and_more">
+        <item quantity="one">and %1$d more</item>
+        <item quantity="other">and %1$d more</item>
+    </plurals>
+    <string name="saving">Saving…</string>
+    <string name="share_save_title">To the LanDrop folder</string>
+    <string name="share_save_desc">Files will appear in the browser on your computer</string>
+    <string name="upload_speed">%1$d%% · %2$s/s</string>
+    <string name="notification_server_running">Server is running on port %1$d</string>
+    <string name="toast_no_app_for_link">No app for this link</string>
+
+    <!-- Remote view -->
+    <string name="remote_bad_link">The link does not contain a LanDrop address</string>
+    <string name="remote_server_unavailable">Server unavailable</string>
+    <string name="remote_read_error">Failed to read files</string>
+    <string name="remote_delete_folder_title">Delete folder on the phone?</string>
+    <string name="remote_delete_file_title">Delete file on the phone?</string>
+    <plurals name="remote_delete_items_title">
+        <item quantity="one">Delete %1$d item on the phone?</item>
+        <item quantity="other">Delete %1$d items on the phone?</item>
+    </plurals>
+    <string name="remote_delete_folder_body">Selected files and folders will be deleted on the host phone. Folder contents will be deleted too.</string>
+    <string name="remote_delete_files_body">Selected files will be deleted on the host phone.</string>
+    <string name="remote_title">Wi-Fi view</string>
+    <string name="remote_subtitle">%1$s · remote phone</string>
+    <string name="remote_folders_error">Failed to get the folder list</string>
+    <string name="remote_open_browser">Browser</string>
+    <string name="remote_no_picker">No file picker</string>
+    <string name="remote_tab_files">Files</string>
+    <string name="remote_delete_file">Delete file</string>
+    <string name="remote_delete_selected">Delete selected</string>
+    <string name="remote_no_files">No files on the phone yet</string>
+    <string name="remote_drop_hint">Send a file with the button below — it will appear in this list</string>
+    <string name="remote_upload_hint">Send a file with the button below — it will land in this folder</string>
+    <string name="remote_source_all">All</string>
+    <string name="remote_gallery_empty">Gallery is empty</string>
+    <string name="remote_gallery_hint">Allow photo and video access on that phone or add files</string>
+    <string name="remote_saved_downloads">Saved to Downloads</string>
+    <string name="remote_save_error">Failed to save the file</string>
+    <string name="remote_storage_permission">Storage access required</string>
+    <string name="remote_open_in_browser">Open in browser</string>
+    <string name="remote_saving">Saving…</string>
+    <string name="remote_saving_percent">Saving %1$d%%</string>
+    <string name="remote_in_browser">In the browser</string>
+    <string name="remote_no_connection">No connection to the phone</string>
+
+    <!-- Gallery source labels -->
+    <string name="media_source_received">Received</string>
+    <string name="media_source_device">Phone photos &amp; videos</string>
+
+    <!-- File sizes -->
+    <string name="size_bytes">%1$d B</string>
+    <string name="size_kb">KB</string>
+    <string name="size_mb">MB</string>
+    <string name="size_gb">GB</string>
+    <string name="size_tb">TB</string>
+
+    <!-- Vault upload errors -->
+    <string name="vault_error_auth">The vault rejected the login: check your username and password</string>
+    <string name="vault_error_not_found">Folder not found on the server</string>
+    <string name="vault_error_too_large">The file is larger than the server accepts</string>
+    <string name="vault_error_no_space">The vault is out of space</string>
+    <string name="vault_error_http">The server responded %1$d</string>
+    <string name="vault_error_no_connection">No connection to the vault: %1$s</string>
+    <string name="vault_error_network_broken">connection dropped</string>
+    <string name="vault_error_unknown">Unknown error</string>
+    <string name="vault_error_no_config">Vault is not configured: set the address in the Vault section</string>
+    <string name="vault_error_source_gone">File unavailable: the source is gone</string>
+    <string name="vault_error_source_lost">Source unavailable after restart</string>
+
+    <!-- Plurals -->
+    <plurals name="files_count">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
+</resources>
