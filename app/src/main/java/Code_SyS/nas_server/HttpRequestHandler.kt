@@ -376,7 +376,7 @@ class HttpRequestHandler(
                 logger("HTTP: неверный PIN (осталось попыток: ${result.remaining})")
                 servePinPage(
                     output, next,
-                    "Неверный PIN. Осталось попыток: ${result.remaining}",
+                    attemptsMessage(result.remaining),
                     401, headOnly = false,
                 )
             }
@@ -385,11 +385,18 @@ class HttpRequestHandler(
                 logger("HTTP: перебор PIN, вход заблокирован")
                 servePinPage(
                     output, next,
-                    "Слишком много неверных попыток. Подождите ${result.retryAfterMs / 1000} с.",
+                    "Слишком много неверных попыток. Повторите через ${result.retryAfterMs / 1000} с.",
                     429, headOnly = false,
                 )
             }
         }
+    }
+
+    /** Сообщение о неверном коде со склонением слова «попытка». */
+    private fun attemptsMessage(left: Int): String = when (left) {
+        1 -> "Неверный PIN. Осталась 1 попытка."
+        in 2..4 -> "Неверный PIN. Осталось $left попытки."
+        else -> "Неверный PIN. Осталось $left попыток."
     }
 
     private fun servePinPage(
@@ -399,8 +406,13 @@ class HttpRequestHandler(
         status: Int,
         headOnly: Boolean,
     ) {
+        val reason = when (status) {
+            200 -> "OK"
+            429 -> "Too Many Requests"
+            else -> "Unauthorized"
+        }
         writeResponse(
-            output, status, if (status == 200) "OK" else "Unauthorized",
+            output, status, reason,
             CONTENT_TYPE_HTML, loginPageHtml(next, error).toByteArray(), includeBody = !headOnly,
         )
     }
@@ -430,25 +442,32 @@ class HttpRequestHandler(
             |<html lang="ru"><head>
             |<meta charset="utf-8">
             |<meta name="viewport" content="width=device-width, initial-scale=1">
-            |<title>Вход по PIN</title>
+            |${WebTemplates.THEME_BOOT}
+            |<title>Вход по PIN — LanDrop</title>
             |<style>
-            |body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#12141a;color:#e8eaf0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
-            |.card{width:min(92vw,360px);padding:28px;border-radius:18px;background:#1b1f27;box-shadow:0 18px 50px rgba(0,0,0,.45)}
-            |h1{margin:0 0 6px;font-size:20px}
-            |p{margin:0 0 18px;color:#9aa3b2;font-size:14px}
-            |input{width:100%;box-sizing:border-box;padding:14px;border-radius:12px;border:1px solid #2c3440;background:#12141a;color:#fff;font-size:24px;letter-spacing:.5em;text-align:center}
-            |input:focus{outline:none;border-color:#5b8cff}
-            |button{width:100%;margin-top:14px;padding:13px;border:none;border-radius:12px;background:#4f7cff;color:#fff;font-size:16px;font-weight:600;cursor:pointer}
-            |.error{margin-top:14px;padding:10px 12px;border-radius:10px;background:#3a1d24;color:#ff9aa8;font-size:14px}
+            |${WebTemplates.THEME_CSS}
+            |body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;transition:background .18s,color .18s}
+            |.card{position:relative;width:min(92vw,360px);padding:28px;border-radius:18px;background:var(--card-bg);border:1px solid var(--line);box-shadow:var(--shadow)}
+            |.card .theme-btn{position:absolute;top:14px;right:14px}
+            |h1{margin:0 0 8px;font-size:20px}
+            |p{margin:0 0 18px;color:var(--muted);font-size:14px;line-height:1.45}
+            |input[name=code]{width:100%;box-sizing:border-box;padding:14px;border-radius:12px;border:1px solid var(--line-strong);background:var(--field);color:var(--text);font-size:24px;letter-spacing:.5em;text-align:center;font-family:inherit}
+            |input[name=code]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+            |button[type=submit]{width:100%;margin-top:16px;padding:13px;border:none;border-radius:12px;background:var(--accent);color:var(--on-accent);font-size:16px;font-weight:600;cursor:pointer;font-family:inherit}
+            |button[type=submit]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+            |.error{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--err-soft);border:1px solid var(--err-line);color:var(--red);font-size:14px}
             |</style></head><body>
             |<form class="card" method="post" action="$PIN_VERIFY_PATH">
+            |${WebTemplates.THEME_BUTTON}
             |<h1>Введите PIN</h1>
-            |<p>Сервер просит 4-значный код из приложения.</p>
-            |<input name="code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" autofocus required aria-label="PIN">
+            |<p>Введите 4-значный PIN-код, указанный в приложении LanDrop.</p>
+            |<input name="code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" autofocus required aria-label="PIN-код">
             |$errorBlock
             |<input type="hidden" name="next" value="${htmlEscape(next)}">
             |<button type="submit">Войти</button>
-            |</form></body></html>
+            |</form>
+            |${WebTemplates.THEME_SCRIPT}
+            |</body></html>
         """.trimMargin()
     }
 

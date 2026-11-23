@@ -17,7 +17,7 @@ package Code_SyS.nas_server
 internal object WebTemplates {
 
     /** Тема до первой отрисовки: без этого светлая тема «вспыхивала» бы тёмной. */
-    private const val THEME_BOOT = """
+    internal const val THEME_BOOT = """
 <meta name="theme-color" content="#0a0c11" id="theme-color">
 <script>
 (function () {
@@ -29,7 +29,7 @@ internal object WebTemplates {
 </script>"""
 
     /** Общие токены оформления и кнопка переключения темы. */
-    private const val THEME_CSS = """
+    internal const val THEME_CSS = """
   :root {
     color-scheme: dark;
     --bg: #0a0c11;
@@ -150,14 +150,14 @@ internal object WebTemplates {
 """
 
     /** Кнопка темы: в тёмной теме показывает солнце, в светлой — луну. */
-    private const val THEME_BUTTON = """
+    internal const val THEME_BUTTON = """
       <button class="theme-btn" id="theme-toggle" type="button" title="Светлая тема" aria-label="Светлая тема">
         <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m4.9 19.1 1.4-1.4"/><path d="m17.7 6.3 1.4-1.4"/></svg>
         <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>"""
 
     /** Переключение и запоминание темы; системная тема — только пока выбор не сделан. */
-    private const val THEME_SCRIPT = """
+    internal const val THEME_SCRIPT = """
 <script>
 (function () {
   var root = document.documentElement;

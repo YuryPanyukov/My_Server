@@ -2,10 +2,14 @@
     <string name="app_name">LanDrop</string>
     <string name="app_tagline">Files over Wi-Fi</string>
     <string name="pin_enabled_with_code">PIN protection: %1$s · server is protected</string>
-    <string name="pin_enabled">PIN protection: enabled</string>
     <string name="pin_disabled">PIN protection: disabled</string>
-    <string name="pin_settings_button">PIN code: %1$s — configure</string>
     <string name="pin_change_button">Change</string>
+    <string name="pin_dialog_title">Server PIN</string>
+    <string name="pin_dialog_enable">Enable PIN</string>
+    <string name="pin_dialog_hint">PIN (4 digits)</string>
+    <string name="pin_generate">Generate</string>
+    <string name="pin_invalid">Exactly 4 digits required</string>
+    <string name="pin_saved">PIN saved</string>
     <string name="notification_channel_name">LanDrop</string>
     <string name="notification_channel_desc">Receive files over Wi-Fi</string>
 

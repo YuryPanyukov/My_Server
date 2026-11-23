@@ -1,6 +1,5 @@
 package Code_SyS.nas_server
 
-import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -120,9 +119,6 @@ class WebDavClient(private val config: WebDavConfig) {
         }
     }
 
-    fun uploadFile(file: File, progress: (Long) -> Unit = {}): Result<Unit> =
-        upload(file.name, file.length(), { FileOpeners.readFile(file) }, progress)
-
     private fun open(method: String, path: String): HttpURLConnection {
         val url = URL(buildTarget(path))
         val connection = url.openConnection() as HttpURLConnection
@@ -209,14 +205,5 @@ class WebDavClient(private val config: WebDavConfig) {
             }
             return builder.toString()
         }
-    }
-}
-
-/** Отделено от клиента, чтобы тесты могли заменить чтение файла. */
-internal object FileOpeners {
-    fun readFile(file: File): InputStream? = try {
-        file.inputStream()
-    } catch (_: Exception) {
-        null
     }
 }

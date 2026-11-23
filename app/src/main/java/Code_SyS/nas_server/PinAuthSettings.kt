@@ -24,6 +24,13 @@ object PinAuthSettings {
     private const val KEY_CODE = "pin_code"
     const val PIN_LENGTH = 4
 
+    private val random = SecureRandom()
+
+    /** Случайный код из [PIN_LENGTH] цифр — для кнопки «Сгенерировать» в диалоге. */
+    fun generateCode(): String = buildString(PIN_LENGTH) {
+        repeat(PIN_LENGTH) { append(random.nextInt(10)) }
+    }
+
     /** Код, которым помечается PIN-сообщение в бинарном потоке. */
     const val PIN_MAGIC = 0x50 // 'P'
 
@@ -53,13 +60,6 @@ object PinAuthSettings {
                 ?: remove(KEY_CODE)
             apply()
         }
-    }
-
-    /** Сгенерировать случайный PIN и сразу сохранить. Возвращает сам PIN. */
-    fun generateAndSave(context: Context): String {
-        val code = generatePin()
-        save(context, PinAuthConfig(enabled = true, code = code))
-        return code
     }
 
     /** Включить или выключить PIN, не меняя код. */
@@ -117,11 +117,6 @@ object PinAuthSettings {
         }
     }
 
-    private fun generatePin(): String {
-        val rng = SecureRandom()
-        val digits = ByteArray(PIN_LENGTH) { (rng.nextInt(10) + '0'.code).toByte() }
-        return String(digits, StandardCharsets.US_ASCII)
-    }
 }
 
 /** Конфигурация PIN: включён ли и какой код. */

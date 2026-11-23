@@ -36,6 +36,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
@@ -52,6 +54,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -222,8 +225,7 @@ fun FileReceiverScreen(
     val toastCameraOpenError = stringResource(R.string.toast_camera_open_error)
     val toastConfirmOpenError = stringResource(R.string.toast_confirm_open_error)
     val toastCreateError = stringResource(R.string.create_error)
-    val pinEnabledText = stringResource(R.string.pin_enabled)
-    val pinDisabledText = stringResource(R.string.pin_disabled)
+    val pinSavedText = stringResource(R.string.pin_saved)
     val toastRenameError = stringResource(R.string.rename_error)
     val toastMoveErrorSingle = stringResource(R.string.toast_move_error_single)
     val undoLabel = stringResource(R.string.undo)
@@ -233,13 +235,11 @@ fun FileReceiverScreen(
     var isServiceRunning by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf(statusStoppedText) }
     var ipText by remember { mutableStateOf(ipLabelText + " —") }
-    var pinEnabled by remember { mutableStateOf(false) }
     var pinCode by remember { mutableStateOf("") }
+    var showPinDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val config = PinAuthSettings.load(context)
-        pinEnabled = config.enabled && config.hasCode
-        pinCode = config.code ?: ""
+        pinCode = PinAuthSettings.load(context).code.orEmpty()
     }
     var httpUrlText by remember { mutableStateOf(browserLabelText + " —") }
     var galleryUrlText by remember { mutableStateOf(galleryLabelText + " —") }
@@ -298,6 +298,22 @@ fun FileReceiverScreen(
         )
     }
 
+    if (showPinDialog) {
+        PinSettingsDialog(
+            initial = PinAuthSettings.load(context),
+            onSave = { config ->
+                PinAuthSettings.save(context, config)
+                // Сервер читает PIN из PinAuthCodec на каждый запрос,
+                // поэтому перезапуск не нужен: старые сессии сразу станут недействительны.
+                PinAuthCodec.update(config)
+                pinCode = config.code.orEmpty()
+                showPinDialog = false
+                Toast.makeText(context, pinSavedText, Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showPinDialog = false },
+        )
+    }
+
     // IP читается один раз при создании экрана
 
 
@@ -330,10 +346,8 @@ fun FileReceiverScreen(
                 }
                 files = snapshot.first
                 entries = snapshot.second
-                // PIN: обновить статус защиты (включена / выключена, код)
-                val pinConfig = PinAuthSettings.load(context)
-                pinEnabled = pinConfig.enabled && pinConfig.hasCode
-                pinCode = pinConfig.code ?: ""
+                // PIN: обновить код защиты (пустая строка — защита выключена)
+                pinCode = PinAuthSettings.load(context).code.orEmpty()
 
                 // Хранилище: возобновить очередь, показать число недоставленных
                 // и разово просканировать автоархивацию (внутри троттлинг ~15 мин).
@@ -500,10 +514,6 @@ fun FileReceiverScreen(
             // раскладываются не по порядку и часть карточек пропадает.
             Column(modifier = Modifier.fillMaxWidth()) {
             BrandHeader()
-            if (pinEnabled) {
-                PinStatusChip(code = pinCode)
-                Spacer(modifier = Modifier.height(6.dp))
-            }
             Spacer(modifier = Modifier.height(20.dp))
 
             ServerCard(
@@ -535,6 +545,12 @@ fun FileReceiverScreen(
                         }
                     }
                 }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            PinSettingsButton(
+                code = pinCode.ifEmpty { null },
+                onSettingsClick = { showPinDialog = true },
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -932,30 +948,122 @@ fun FileReceiverScreen(
     }
 }
 
+/** Настройка PIN: включение защиты и ввод нового четырёхзначного кода. */
 @Composable
-private fun PinStatusChip(code: String) {
+private fun PinSettingsDialog(
+    initial: PinAuthConfig,
+    onSave: (PinAuthConfig) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pinInput by remember { mutableStateOf(initial.code.orEmpty()) }
+    var enabled by remember { mutableStateOf(initial.enabled) }
+
+    val codeValid = pinInput.length == PinAuthSettings.PIN_LENGTH && pinInput.all { it.isDigit() }
+    val showError = pinInput.isNotEmpty() && !codeValid
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.pin_dialog_title)) },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.pin_dialog_enable), fontSize = 14.sp)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                if (enabled) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { value ->
+                            pinInput = value.filter { it.isDigit() }
+                                .take(PinAuthSettings.PIN_LENGTH)
+                        },
+                        label = { Text(stringResource(R.string.pin_dialog_hint)) },
+                        singleLine = true,
+                        isError = showError,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    )
+                    if (showError) {
+                        Text(
+                            text = stringResource(R.string.pin_invalid),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { pinInput = PinAuthSettings.generateCode() }) {
+                            Text(stringResource(R.string.pin_generate), fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !enabled || codeValid,
+                onClick = {
+                    onSave(
+                        if (enabled) {
+                            PinAuthConfig(enabled = true, code = pinInput)
+                        } else {
+                            PinAuthConfig(enabled = false, code = null)
+                        }
+                    )
+                },
+            ) { Text(stringResource(R.string.save_button)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel_button)) }
+        },
+    )
+}
+
+/**
+ * Единственная строка про PIN на главном экране: показывает состояние защиты
+ * и открывает [PinSettingsDialog] по «Изменить». `code == null` — защита выключена.
+ */
+@Composable
+private fun PinSettingsButton(code: String?, onSettingsClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    val active = code != null
     Surface(
-        shape = RoundedCornerShape(999.dp),
-        color = scheme.primary.copy(alpha = .12f),
+        shape = RoundedCornerShape(10.dp),
+        color = scheme.surfaceVariant.copy(alpha = .6f),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = Icons.Default.Lock,
                 contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = scheme.primary,
+                modifier = Modifier.size(16.dp),
+                tint = if (active) scheme.primary else scheme.onSurfaceVariant,
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = stringResource(R.string.pin_enabled_with_code, code),
-                fontSize = 11.5.sp,
-                color = scheme.onPrimary.copy(alpha = .9f),
+                text = if (code != null) {
+                    stringResource(R.string.pin_enabled_with_code, code)
+                } else {
+                    stringResource(R.string.pin_disabled)
+                },
+                fontSize = 12.5.sp,
+                color = if (active) scheme.primary else scheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            TextButton(onClick = onSettingsClick) {
+                Text(
+                    text = stringResource(R.string.pin_change_button),
+                    fontSize = 11.sp,
+                )
+            }
         }
     }
 }

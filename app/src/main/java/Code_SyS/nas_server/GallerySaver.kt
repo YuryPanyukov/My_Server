@@ -92,10 +92,3 @@ object GallerySaver {
     }
 }
 
-/** Текущее состояние настройки и копирование для фоновых вызовов. */
-internal fun publishToGalleryIfEnabled(context: Context, file: File) {
-    if (GallerySaver.isEnabled(context)) {
-        GallerySaver.publish(context, file)
-    }
-}
-
